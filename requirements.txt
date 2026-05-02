@@ -1,0 +1,7 @@
+tqdm
+joblib
+numpy<2
+pandas
+scipy
+matplotlib
+gym==0.26.2

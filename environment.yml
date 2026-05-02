@@ -1,0 +1,14 @@
+name: thermodynamic_limit_entropy_rl
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy<2
+  - pandas
+  - scipy
+  - matplotlib
+  - joblib
+  - tqdm
+  - pip
+  - pip:
+      - gym==0.26.2

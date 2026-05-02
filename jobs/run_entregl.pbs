@@ -1,0 +1,35 @@
+#!/bin/bash
+#PBS -N entregl_main
+#PBS -q short
+#PBS -l select=1:ncpus=24:mem=16gb
+#PBS -l walltime=00:30:00
+#PBS -j oe
+#PBS -V
+
+set -euo pipefail
+
+REPO_DIR="${REPO_DIR:-$HOME/2023-EntRegRL}"
+ENV_NAME="${ENV_NAME:-entregrl}"
+MAIN_SCRIPT="${MAIN_SCRIPT:-main.py}"
+LOG_DIR="$REPO_DIR/logs"
+
+mkdir -p "$LOG_DIR"
+cd "$REPO_DIR"
+
+export MPLBACKEND=Agg
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
+
+JOB_LOG="$LOG_DIR/${PBS_JOBID:-manual}.log"
+
+echo "[$(date)] starting job on $(hostname)" | tee "$JOB_LOG"
+echo "repo=$REPO_DIR env=$ENV_NAME script=$MAIN_SCRIPT" | tee -a "$JOB_LOG"
+echo "PBS_JOBID=${PBS_JOBID:-none}" | tee -a "$JOB_LOG"
+
+~/miniconda3/bin/conda run -n "$ENV_NAME" python "$MAIN_SCRIPT" 2>&1 | tee -a "$JOB_LOG"
+
+STATUS=${PIPESTATUS[0]}
+echo "[$(date)] finished with status $STATUS" | tee -a "$JOB_LOG"
+exit $STATUS
