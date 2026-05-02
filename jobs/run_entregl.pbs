@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-$HOME/2023-EntRegRL}"
+REPO_DIR="${REPO_DIR:-$HOME/thermodynamic_limit_entropy_RL}"
 ENV_NAME="${ENV_NAME:-entregrl}"
 MAIN_SCRIPT="${MAIN_SCRIPT:-main.py}"
 LOG_DIR="$REPO_DIR/logs"

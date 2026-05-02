@@ -45,7 +45,7 @@ MPLBACKEND=Agg python main.py
 PBS run on W003:
 
 ```bash
-cd ~/2023-EntRegRL
+cd ~/thermodynamic_limit_entropy_RL
 qsub jobs/run_entregl.pbs
 ```
 
