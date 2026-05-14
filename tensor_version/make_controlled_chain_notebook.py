@@ -1362,17 +1362,35 @@ print("rho left/right relative mismatch:", model_metrics["rho_left_right_rel_mis
 print("Doob stationary L1 error:", model_metrics["doob_stationary_l1_error"])
 print("Exact stationary observables:", exact_obs)
 print("MPS stationary observables:", model_obs)
+
+rho_compare = [
+    ("exact", result["step1_exact"]["rho"], 0.0),
+    ("MPS avg", model_metrics["rho"], model_metrics["rho_rel_error"]),
+    ("MPS right", model_metrics["rho_right"], abs(model_metrics["rho_right"] - result["step1_exact"]["rho"]) / result["step1_exact"]["rho"]),
+    ("MPS left", model_metrics["rho_left"], abs(model_metrics["rho_left"] - result["step1_exact"]["rho"]) / result["step1_exact"]["rho"]),
+    ("sampled", result["step3_mps_sampled_u_theta"]["rho"], result["step3_mps_sampled_u_theta"]["rho_rel_error"]),
+]
+
+print("\nExplicit rho comparison")
+print(f"{'rho source':<10} {'rho':>14} {'rel err vs exact':>18}")
+for name, value, err in rho_compare:
+    print(f"{name:<10} {value:14.10f} {err:18.3e}")
+print(
+    "right-left absolute difference:",
+    abs(model_metrics["rho_right"] - model_metrics["rho_left"]),
+)
 """
     ),
     md(
         r"""
 ## 9. 图 6：三种方法的数值比较
 
-图 6 分三栏：
+图 6 分四栏：
 
 1. Perron eigenvalue $\rho$；
-2. 右/左相对本征残差；
-3. 与精确 $u$、$v$、以及 $\mu^*\propto vu$ 的归一化内积。
+2. model-based 右、左本征值 $\rho_u,\rho_v$ 的显式对比；
+3. 右/左相对本征残差；
+4. 与精确 $u$、$v$、以及 $\mu^*\propto vu$ 的归一化内积。
 
 第三栏越接近 1，说明学到的 Perron pair 与 Doob 稳态越接近精确解。
 """
@@ -1387,7 +1405,7 @@ u_cosines = [s["u_cos"] for s in summary]
 v_cosines = [s["v_cos"] for s in summary]
 mu_cosines = [s["mu_cos"] for s in summary]
 
-fig, axes = plt.subplots(1, 3, figsize=(12, 3.4))
+fig, axes = plt.subplots(1, 4, figsize=(15.5, 3.4))
 
 axes[0].bar(methods, rho_vals, color=["0.35", "tab:blue", "tab:orange"])
 axes[0].axhline(rho_exact, ls="--", color="k", lw=1)
@@ -1395,28 +1413,44 @@ axes[0].set_ylabel(r"Perron eigenvalue $\rho$")
 axes[0].set_title("Figure 6a. Eigenvalue")
 axes[0].tick_params(axis="x", rotation=25)
 
+rho_names = ["exact", "right", "left", "avg"]
+rho_lr_vals = [
+    result["step1_exact"]["rho"],
+    model_metrics["rho_right"],
+    model_metrics["rho_left"],
+    model_metrics["rho"],
+]
+axes[1].bar(rho_names, rho_lr_vals, color=["0.35", "tab:blue", "tab:green", "tab:purple"])
+axes[1].axhline(rho_exact, ls="--", color="k", lw=1)
+for i, value in enumerate(rho_lr_vals):
+    rel = abs(value - rho_exact) / rho_exact
+    axes[1].text(i, value, f"{rel:.1e}", ha="center", va="bottom", fontsize=8, rotation=90)
+axes[1].set_ylabel(r"$\rho$")
+axes[1].set_title("Figure 6b. Left/right rho")
+axes[1].tick_params(axis="x", rotation=25)
+
 width = 0.36
 x = np.arange(len(methods))
-axes[1].bar(x - width/2, right_resids, width=width, label="right $u$", color="tab:blue")
+axes[2].bar(x - width/2, right_resids, width=width, label="right $u$", color="tab:blue")
 left_plot = [v if np.isfinite(v) else 0.0 for v in left_resids]
-axes[1].bar(x + width/2, left_plot, width=width, label="left $v$", color="tab:green")
-axes[1].set_yscale("log")
-axes[1].set_xticks(x)
-axes[1].set_xticklabels(methods, rotation=25, ha="right")
-axes[1].set_ylabel("relative Perron residual")
-axes[1].set_title("Figure 6b. Eigen residual")
-axes[1].legend(fontsize=8)
-
-width = 0.25
-axes[2].bar(x - width, u_cosines, width=width, label="$u$", color="tab:blue")
-axes[2].bar(x, [v if np.isfinite(v) else 0.0 for v in v_cosines], width=width, label="$v$", color="tab:green")
-axes[2].bar(x + width, [m if np.isfinite(m) else 0.0 for m in mu_cosines], width=width, label=r"$\mu^*$", color="tab:purple")
-axes[2].set_ylim(0.98, 1.0005)
+axes[2].bar(x + width/2, left_plot, width=width, label="left $v$", color="tab:green")
+axes[2].set_yscale("log")
 axes[2].set_xticks(x)
 axes[2].set_xticklabels(methods, rotation=25, ha="right")
-axes[2].set_ylabel("cosine with exact object")
-axes[2].set_title("Figure 6c. Perron pair direction")
+axes[2].set_ylabel("relative Perron residual")
+axes[2].set_title("Figure 6c. Eigen residual")
 axes[2].legend(fontsize=8)
+
+width = 0.25
+axes[3].bar(x - width, u_cosines, width=width, label="$u$", color="tab:blue")
+axes[3].bar(x, [v if np.isfinite(v) else 0.0 for v in v_cosines], width=width, label="$v$", color="tab:green")
+axes[3].bar(x + width, [m if np.isfinite(m) else 0.0 for m in mu_cosines], width=width, label=r"$\mu^*$", color="tab:purple")
+axes[3].set_ylim(0.98, 1.0005)
+axes[3].set_xticks(x)
+axes[3].set_xticklabels(methods, rotation=25, ha="right")
+axes[3].set_ylabel("cosine with exact object")
+axes[3].set_title("Figure 6d. Perron pair direction")
+axes[3].legend(fontsize=8)
 
 plt.tight_layout()
 plt.show()
@@ -1427,12 +1461,23 @@ plt.show()
 **图 6 说明。**
 
 **(a) Eigenvalue.**  
-MPS model-based 的 $\rho$ 与精确值几乎重合；新版还同时报告 $\rho_u$ 与 $\rho_v$，二者 mismatch 约为 $10^{-4}$。sampled $u$-$\theta$ 有可见偏差，因为它只用有限采样估计 Bellman expectation。
+第一栏比较 exact、model-based 平均 $\rho=(\rho_u+\rho_v)/2$ 与 sampled $\rho$。MPS model-based 的 $\rho$ 与精确值几乎重合；sampled $u$-$\theta$ 有可见偏差，因为它只用有限采样估计 Bellman expectation。
 
-**(b) Eigen residual.**  
+**(b) Left/right rho.**  
+第二栏专门比较 model-based 的 $\rho_u$ 与 $\rho_v$。数值上
+
+$$
+\rho_u=0.7748279380,
+\qquad
+\rho_v=0.7747603945,
+$$
+
+二者相对 mismatch 为 $8.7\times10^{-5}$。在精确 Perron pair 中左右本征值必须相同；这里的差异就是双 MPS 变分优化尚未完全收敛的直接诊断。
+
+**(c) Eigen residual.**  
 精确解残差在机器精度；model-based MPS 的右、左残差都在 $10^{-4}$ 到 $10^{-3}$ 量级。sampled 方法只学习右矢 $u$，所以没有左残差。
 
-**(c) Eigenfunction direction.**  
+**(d) Eigenfunction direction.**  
 model-based MPS 与精确 $u$、$v$ 的 cosine 都接近 $0.999998$，并且 $\mu^*\propto vu$ 的 cosine 也接近 $0.999998$。这说明 $\chi=16$ 不仅能表达控制用的右矢，也能表达 Doob 稳态所需的左矢。
 """
     ),
