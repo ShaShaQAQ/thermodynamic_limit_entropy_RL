@@ -30,17 +30,25 @@ nb["metadata"] = {
 nb["cells"] = [
     md(
         r"""
-# 受控 hard-core 多 agent 链：解析结构与三步数值验证
+# 受控 hard-core 多 agent 链：解析结构与张量网络数值验证
 
-这份 notebook 只做一件事：把我们讨论的“多 agent 最近邻 reward + 张量网络表示”的问题，从数学定义一路走到三步数值验证。
+这份 notebook 只做一件事：把我们讨论的“多 agent 最近邻 reward + 张量网络表示”的问题，从数学定义一路走到数值验证。
 
-三步是：
+前半部分的三步小体系验证是：
 
 1. **小体系精确解**：显式构造 state-action tilted operator，求左右 Perron 本征矢。
 2. **显式 MPO + MPS model-based 解**：用有限状态自动机 MPO 表示 $K_\beta$，用两个 MPS 分别表示 $u_\theta(n,a)$ 与 $v_\phi(n,a)$，并求解左右 Perron residual。
 3. **MPS $u$-$\theta$ learning**：不显式构造矩阵，只从 prior dynamics 采样 transition 来学习。
 
-所有图表都围绕同一个小体系：
+随后加入真正 dense-free 的 model-based MPO-MPS power iteration，检查半填充体系
+
+$$
+L=6,8,12,16,\qquad N=L/2
+$$
+
+是否可以不构造全局 dense matrix 地跑起来。
+
+前半部分图表围绕同一个小体系：
 
 $$
 L=6,\qquad N=3,\qquad \lvert\mathcal{S}\rvert=\binom{6}{3}=20,\qquad \lvert\mathcal{A}\rvert=10.
@@ -1635,7 +1643,288 @@ $$
     ),
     md(
         r"""
-## 10. 最终结论
+## 11. Dense-free MPO-MPS 大体系原型
+
+前面的 `ExplicitTiltedMPO.build_restricted_matrix()` 仍然会把 automaton MPO 限制到合法 sector 后生成 dense matrix。
+这一步只是小体系 benchmark，不是热力学极限算法。
+
+现在新增的 `tensor_mpo_mps.py` 做的是另一条路线：
+
+```text
+legal half-filled MPS
+    -> automaton MPO apply for K_beta or K_beta^T
+    -> SVD compression to chi_max
+    -> right/left compressed power iteration
+```
+
+这里不再构造全局 $K_\beta$ matrix。计算在 W003 的 `cmt` 队列上完成，本 notebook 只读取结果文件。
+当前第一版使用 full local `d=6` MPS，而不是 U(1) block-sparse MPS，所以结果必须和压缩诊断一起看。
+"""
+    ),
+    code(
+        r"""
+tn_paths = {
+    6: ROOT / "outputs" / "tensor_mpo_mps_L6_chi64_steps50.json",
+    8: ROOT / "outputs" / "tensor_mpo_mps_L8_chi64_steps50.json",
+    12: ROOT / "outputs" / "tensor_mpo_mps_L12_chi64_steps50.json",
+    16: ROOT / "outputs" / "tensor_mpo_mps_L16_chi64_steps50.json",
+}
+
+missing = [str(p) for p in tn_paths.values() if not p.exists()]
+if missing:
+    raise FileNotFoundError("Missing dense-free MPO-MPS result files:\n" + "\n".join(missing))
+
+tn_rows = []
+for L, path in tn_paths.items():
+    with open(path) as f:
+        payload = json.load(f)
+    settings = payload["settings"]
+    metrics = payload["tensor_mpo_mps"]
+    last = metrics["history"][-1]
+    row = {
+        "L": L,
+        "N": payload["params"]["N"],
+        "chi": settings["chi_max"],
+        "steps": settings["steps"],
+        "rho_right": metrics["rho_right"],
+        "rho_left": metrics["rho_left"],
+        "rho_avg": metrics["rho"],
+        "log_rho_per_site": metrics["log_rho_per_site"],
+        "rho_mismatch": metrics["rho_left_right_rel_mismatch"],
+        "discard_right": last["discarded_weight_right"],
+        "discard_left": last["discarded_weight_left"],
+        "bond_right": last["max_bond_dim_right"],
+        "bond_left": last["max_bond_dim_left"],
+    }
+    if "dense_validation" in payload:
+        row["rho_exact"] = payload["dense_validation"]["rho_exact"]
+        row["rho_right_rel_error"] = payload["dense_validation"]["rho_right_rel_error"]
+        row["rho_left_rel_error"] = payload["dense_validation"]["rho_left_rel_error"]
+    else:
+        row["rho_exact"] = np.nan
+        row["rho_right_rel_error"] = np.nan
+        row["rho_left_rel_error"] = np.nan
+    tn_rows.append(row)
+
+print(
+    f"{'L':>3} {'N':>3} {'chi':>5} {'steps':>6} "
+    f"{'rho_R':>12} {'rho_L':>12} {'mismatch':>11} "
+    f"{'logrho/L':>12} {'disc_R':>12} {'disc_L':>12}"
+)
+for row in tn_rows:
+    print(
+        f"{row['L']:3d} {row['N']:3d} {row['chi']:5d} {row['steps']:6d} "
+        f"{row['rho_right']:12.6f} {row['rho_left']:12.6f} {row['rho_mismatch']:11.3e} "
+        f"{row['log_rho_per_site']:12.6f} {row['discard_right']:12.3e} {row['discard_left']:12.3e}"
+    )
+
+print("\nSmall-system dense validation when available")
+for row in tn_rows:
+    if np.isfinite(row["rho_exact"]):
+        print(
+            f"L={row['L']}: rho_exact={row['rho_exact']:.10f}, "
+            f"right err={row['rho_right_rel_error']:.3e}, left err={row['rho_left_rel_error']:.3e}"
+        )
+"""
+    ),
+    code(
+        r"""
+Ls = np.array([row["L"] for row in tn_rows])
+logrho = np.array([row["log_rho_per_site"] for row in tn_rows])
+mismatch = np.array([row["rho_mismatch"] for row in tn_rows])
+disc_r = np.array([row["discard_right"] for row in tn_rows])
+disc_l = np.array([row["discard_left"] for row in tn_rows])
+bond_r = np.array([row["bond_right"] for row in tn_rows])
+bond_l = np.array([row["bond_left"] for row in tn_rows])
+
+fig, axes = plt.subplots(1, 4, figsize=(15.5, 3.4))
+
+axes[0].plot(Ls, logrho, marker="o", color="tab:blue")
+axes[0].set_xlabel("L at half filling")
+axes[0].set_ylabel(r"$(1/L)\log\rho_L$")
+axes[0].set_title("Figure 8a. Size trend")
+
+axes[1].plot(Ls, mismatch, marker="o", color="tab:purple")
+axes[1].set_yscale("log")
+axes[1].set_xlabel("L")
+axes[1].set_ylabel(r"$|\rho_R-\rho_L|/\rho$")
+axes[1].set_title("Figure 8b. Left/right mismatch")
+
+axes[2].plot(Ls, np.maximum(disc_r, 1e-300), marker="o", label="right", color="tab:blue")
+axes[2].plot(Ls, np.maximum(disc_l, 1e-300), marker="s", label="left", color="tab:green")
+axes[2].set_yscale("log")
+axes[2].set_xlabel("L")
+axes[2].set_ylabel("last-step discarded weight")
+axes[2].set_title("Figure 8c. Compression diagnostic")
+axes[2].legend(fontsize=8)
+
+axes[3].plot(Ls, bond_r, marker="o", label="right", color="tab:blue")
+axes[3].plot(Ls, bond_l, marker="s", label="left", color="tab:green")
+axes[3].axhline(tn_rows[0]["chi"], color="k", ls="--", lw=1, label=r"$\chi_{\max}$")
+axes[3].set_xlabel("L")
+axes[3].set_ylabel("max bond dimension")
+axes[3].set_title("Figure 8d. Bond saturation")
+axes[3].legend(fontsize=8)
+
+plt.tight_layout()
+plt.show()
+"""
+    ),
+    md(
+        r"""
+**图 8 说明。**
+
+这组结果和前面的小体系 dense/MPS benchmark 性质不同：它是第一版真正 dense-free 的 model-based MPO-MPS power iteration。
+每一步只做 automaton MPO 对 MPS 的作用和 SVD compression，不显式形成 $K_\beta$。
+
+需要特别注意两点：
+
+1. **这是算法可扩展性的 smoke test，不是最终收敛的热力学极限估计。**  
+   如果左右 $\rho_R,\rho_L$ mismatch 或 discarded weight 很大，说明固定 $\chi=64$ 的压缩已经成为主要误差源。
+
+2. **当前 MPS 不是 U(1) block-sparse。**  
+   初态是半填充合法 state-action MPS，MPO 规则守恒粒子数；但张量本身不显式按粒子数分块。
+   后续要得到更稳健的 $L\to\infty$ 外推，应升级到 fixed-$N$/U(1) block-sparse MPS，或进一步做 iMPS/iMPO。
+
+因此，图 8 的主要结论是：这条路线已经离开 dense exact matrix，并能在 $L=16$ 级别实际运行；
+但 $\chi=64$ 的第一版压缩还不足以声称精确的热力学极限数值。
+"""
+    ),
+    md(
+        r"""
+### 11.1 Bond dimension $\chi$ 收敛测试
+
+为了判断图 8 的误差主要是不是来自 MPS compression，我们在 W003 的 `cmt` 队列上进一步做了固定 $L$ 的 $\chi$ 扫描。
+这里仍然不构造 dense matrix；dense exact 只在 $L=6$ 上作为校验。
+
+测试矩阵是：
+
+```text
+L=6:  chi = 32, 64, 96, 128
+L=8:  chi = 64, 96, 128, 192
+L=12: chi = 64, 128, 192
+```
+
+所有 run 使用 `steps=50`。
+"""
+    ),
+    code(
+        r"""
+chi_scan = {
+    6: [32, 64, 96, 128],
+    8: [64, 96, 128, 192],
+    12: [64, 128, 192],
+}
+
+chi_rows = []
+for L, chis in chi_scan.items():
+    for chi in chis:
+        path = ROOT / "outputs" / f"tensor_mpo_mps_L{L}_chi{chi}_steps50.json"
+        if not path.exists():
+            raise FileNotFoundError(path)
+        with open(path) as f:
+            payload = json.load(f)
+        metrics = payload["tensor_mpo_mps"]
+        last = metrics["history"][-1]
+        dense = payload.get("dense_validation", {})
+        chi_rows.append({
+            "L": L,
+            "chi": chi,
+            "rho_right": metrics["rho_right"],
+            "rho_left": metrics["rho_left"],
+            "rho_avg": metrics["rho"],
+            "mismatch": metrics["rho_left_right_rel_mismatch"],
+            "log_rho_per_site": metrics["log_rho_per_site"],
+            "discard_right": last["discarded_weight_right"],
+            "discard_left": last["discarded_weight_left"],
+            "dense_err_right": dense.get("rho_right_rel_error", np.nan),
+            "dense_err_left": dense.get("rho_left_rel_error", np.nan),
+        })
+
+for L in chi_scan:
+    print(f"\nL={L}")
+    print(
+        f"{'chi':>5} {'rho_R':>12} {'rho_L':>12} {'mismatch':>11} "
+        f"{'logrho/L':>12} {'disc_R':>12} {'disc_L':>12} "
+        f"{'dense err R':>12} {'dense err L':>12}"
+    )
+    for row in [r for r in chi_rows if r["L"] == L]:
+        print(
+            f"{row['chi']:5d} {row['rho_right']:12.6f} {row['rho_left']:12.6f} "
+            f"{row['mismatch']:11.3e} {row['log_rho_per_site']:12.6f} "
+            f"{row['discard_right']:12.3e} {row['discard_left']:12.3e} "
+            f"{row['dense_err_right']:12.3e} {row['dense_err_left']:12.3e}"
+        )
+"""
+    ),
+    code(
+        r"""
+fig, axes = plt.subplots(1, 3, figsize=(13.5, 3.5))
+
+colors = {6: "tab:blue", 8: "tab:orange", 12: "tab:green"}
+for L in chi_scan:
+    rows = [r for r in chi_rows if r["L"] == L]
+    chis = np.array([r["chi"] for r in rows])
+    mismatch = np.array([r["mismatch"] for r in rows])
+    logrho = np.array([r["log_rho_per_site"] for r in rows])
+    disc = np.array([r["discard_right"] + r["discard_left"] for r in rows])
+    axes[0].plot(chis, mismatch, marker="o", label=f"L={L}", color=colors[L])
+    axes[1].plot(chis, logrho, marker="o", label=f"L={L}", color=colors[L])
+    axes[2].plot(chis, np.maximum(disc, 1e-300), marker="o", label=f"L={L}", color=colors[L])
+
+axes[0].set_yscale("log")
+axes[0].set_xlabel(r"$\chi_{\max}$")
+axes[0].set_ylabel(r"$|\rho_R-\rho_L|/\rho$")
+axes[0].set_title("Figure 9a. Chi convergence diagnostic")
+axes[0].legend(fontsize=8)
+
+axes[1].set_xlabel(r"$\chi_{\max}$")
+axes[1].set_ylabel(r"$(1/L)\log\rho_L$")
+axes[1].set_title("Figure 9b. Size-normalized SCGF")
+axes[1].legend(fontsize=8)
+
+axes[2].set_yscale("log")
+axes[2].set_xlabel(r"$\chi_{\max}$")
+axes[2].set_ylabel("last-step discarded weight sum")
+axes[2].set_title("Figure 9c. Compression loss")
+axes[2].legend(fontsize=8)
+
+plt.tight_layout()
+plt.show()
+"""
+    ),
+    md(
+        r"""
+**图 9 说明。**
+
+`L=6` 的 $\chi$ 收敛是清楚的：从 $\chi=32$ 到 $\chi=128$，
+左右 Perron eigenvalue mismatch 从 $1.76\times 10^{-1}$ 降到 $1.35\times 10^{-8}$。
+同时 dense validation 显示 $\rho_R,\rho_L$ 都已经接近精确值。这说明当前 MPO-MPS apply 本身是对的，小体系误差主要来自压缩。
+
+`L=8` 的结果说明 $\chi=64$ 还不够；$\chi=96$ 和 $\chi=192$ 明显改善 mismatch，
+其中 $\chi=192$ 达到 $9.3\times 10^{-4}$。但 $\chi=128$ 出现非单调跳变，
+说明当前 power iteration + SVD compression 还可能受规范选择、截断路径或未完全收敛影响。
+
+`L=12` 在 $\chi\le 192$ 下仍未稳定。虽然 $\chi=192$ 比 $\chi=128$ 的 mismatch 小，
+但 discarded weight 仍很大，不能用这些数值做可靠的热力学极限外推。
+
+因此，当前最可靠的结论是：
+
+```text
+L=6:  chi convergence works and validates against dense exact.
+L=8:  larger chi helps, chi=192 gives a promising but still diagnostic-level result.
+L=12: chi<=192 is not enough; need better compression/variational fitting or symmetry-aware MPS.
+```
+
+下一步算法上应优先做两件事：
+
+1. 加入 canonical gauge 更严格的 two-site/variational compression，减少 power iteration 中的非单调行为；
+2. 实现 fixed-$N$ 或 U(1) block-sparse MPS，让半填充 sector 的 bond space 不被无关 sector 浪费。
+"""
+    ),
+    md(
+        r"""
+## 12. 最终结论
 
 这个 notebook 验证了三点：
 
@@ -1645,6 +1934,8 @@ $$
 4. model-based 双 MPS 同时给出控制 policy 所需的 $u$ 和 Doob 稳态所需的 $\mu^*\propto vu$。
 5. finite-time exact forward/backward 计算显示，有限 horizon 的 bulk midpoint marginal 会收敛到 $\mu^*\propto vu$，而左右边界保留有限时间效应。
 6. sampled MPS $u$-$\theta$ learning 也能学到正确方向，但目前只学习右矢，精度低于 model-based，这正是采样学习与显式 Bellman expectation 的差别。
+7. 新增 dense-free MPO-MPS power iteration 已经能在 W003 上跑半填充 $L=6,8,12,16$，说明后续可以沿 tensor-network 路线继续优化，而不是继续扩大 dense exact matrix。
+8. $\chi$ 收敛测试表明：$L=6$ 已经收敛并对上 dense exact；$L=8$ 需要至少 $\chi\sim 192$ 才进入较可信区间；$L=12$ 在当前算法和 $\chi\le 192$ 下仍未收敛。
 
 下一步如果要推进到热力学极限，应优先做有限尺寸序列：
 

@@ -1,0 +1,40 @@
+{
+  "params": {
+    "L": 8,
+    "N": 4,
+    "beta": 1.0,
+    "V": 0.7,
+    "lam": 0.25,
+    "c_plus": 0.03,
+    "c_minus": 0.03,
+    "q_plus": 0.9,
+    "q_minus": 0.9,
+    "seed": 7
+  },
+  "settings": {
+    "chi_max": 32,
+    "cutoff": 1e-12,
+    "steps": 1,
+    "dense_validation": false
+  },
+  "tensor_mpo_mps": {
+    "rho": 0.4433551298314695,
+    "rho_right": 0.44354892463723644,
+    "rho_left": 0.4431613350257026,
+    "rho_left_right_rel_mismatch": 0.0008742193006341839,
+    "log_rho_per_site": -0.10167302282620226,
+    "history": [
+      {
+        "step": 1,
+        "rho_right": 0.44354892463723644,
+        "rho_left": 0.4431613350257026,
+        "right_update_residual": NaN,
+        "left_update_residual": NaN,
+        "discarded_weight_right": 1.8114105095556006,
+        "discarded_weight_left": 1.5268230229655873e-06,
+        "max_bond_dim_right": 32,
+        "max_bond_dim_left": 32
+      }
+    ]
+  }
+}
