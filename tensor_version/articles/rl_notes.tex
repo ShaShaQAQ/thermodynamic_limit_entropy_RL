@@ -1,0 +1,2919 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{physics}
+\usepackage{hyperref}
+
+\title{Notes on Entropy-Regularized Reinforcement Learning}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{Equivalence Between Control and Inference}
+
+\subsection*{Trajectory distributions}
+
+The prior or uncontrolled trajectory distribution is
+\begin{equation}
+    p(\tau) = p(s_1)\prod_{t=1}^{N} p(s_{t+1}\mid s_t,a_t)\,\pi(a_t\mid s_t).
+\end{equation}
+
+A controlled trajectory distribution is
+\begin{equation}
+    p_c(\tau) = p_c(s_1)\prod_{t=1}^{N} p_c(s_{t+1}\mid s_t,a_t)\,\pi_c(a_t\mid s_t).
+\end{equation}
+
+The total reward of a trajectory is
+\begin{equation}
+    R_\tau = \sum_{t=1}^{N} r(s_t,a_t).
+\end{equation}
+
+In standard RL, the optimal policy is obtained by maximizing expected reward:
+\begin{equation}
+    \pi^*(a\mid s) = \arg\max_{\pi_c}\; \mathbb{E}_{p_c(\tau)}[R_\tau].
+\end{equation}
+
+In entropy-regularized RL, the objective becomes
+\begin{equation}
+    \mathbb{E}_{p_c(\tau)}[R_\tau] - \frac{1}{\beta}
+    D_{\mathrm{KL}}\!\left(p_c(\tau)\middle\|p(\tau)\right),
+\end{equation}
+with
+\begin{equation}
+    D_{\mathrm{KL}}\!\left(p_c(\tau)\middle\|p(\tau)\right)
+    = \sum_{\tau} p_c(\tau)\log\frac{p_c(\tau)}{p(\tau)}.
+\end{equation}
+
+\subsection*{Optimality variables and Bayes' rule}
+
+The control-as-inference formulation introduces binary optimality variables \(O_t\) through
+\begin{equation}
+    p(O_t=1\mid s_t,a_t) = e^{\beta r(s_t,a_t)}.
+\end{equation}
+
+After shifting rewards so that \(r(s_t,a_t)\le 0\), the quantity
+\(e^{\beta r(s_t,a_t)}\in (0,1]\), so it can be interpreted as the probability that step
+\(t\) is optimal. Better state-action pairs correspond to larger probability of \(O_t=1\).
+
+Define the event that the full trajectory is optimal by
+\begin{equation}
+    O_{1:N} = \bigcap_{t=1}^{N}(O_t=1).
+\end{equation}
+
+Assuming conditional independence of the optimality variables given the trajectory,
+\begin{equation}
+    p(O_{1:N}\mid \tau)
+    = \prod_{t=1}^{N} p(O_t=1\mid s_t,a_t)
+    = \prod_{t=1}^{N} e^{\beta r(s_t,a_t)}
+    = e^{\beta R_\tau}.
+\end{equation}
+
+Bayes' rule then gives the posterior trajectory distribution
+\begin{equation}
+    p(\tau\mid O_{1:N})
+    = \frac{p(O_{1:N}\mid \tau)\,p(\tau)}{p(O_{1:N})}
+    = \frac{p(\tau)e^{\beta R_\tau}}{\sum_{\tau} p(\tau)e^{\beta R_\tau}}.
+\end{equation}
+
+If we define the energetic cost \(E_\tau=-R_\tau\), then
+\begin{equation}
+    p(\tau\mid O_{1:N})
+    = \frac{p(\tau)e^{-\beta E_\tau}}{\sum_{\tau} p(\tau)e^{-\beta E_\tau}},
+\end{equation}
+which is Eq.~(6) in the paper.
+
+\subsection*{Why this solves the KL-regularized control problem}
+
+The optimality variable \(O_t\) is an auxiliary random variable. It does not add a new
+physical degree of freedom to the environment. Its only purpose is to convert the control
+problem into an inference problem.
+
+Conditioning on \(O_{1:N}\) reweights the prior trajectory distribution toward larger-reward
+trajectories:
+\begin{equation}
+    p(\tau\mid O_{1:N}) \propto p(\tau)e^{\beta R_\tau}.
+\end{equation}
+
+This posterior is also the optimizer of the variational problem
+\begin{equation}
+    \max_{q(\tau)}
+    \left[
+        \sum_{\tau} q(\tau)R_\tau
+        - \frac{1}{\beta} D_{\mathrm{KL}}(q(\tau)\|p(\tau))
+    \right].
+\end{equation}
+
+To see this, define
+\begin{equation}
+    q^*(\tau)=\frac{p(\tau)e^{\beta R_\tau}}{Z},
+    \qquad
+    Z=\sum_{\tau} p(\tau)e^{\beta R_\tau}.
+\end{equation}
+
+Then
+\begin{equation}
+    \log q^*(\tau)=\log p(\tau)+\beta R_\tau-\log Z,
+\end{equation}
+so
+\begin{equation}
+    \beta R_\tau-\log\frac{q(\tau)}{p(\tau)}
+    = \log Z - \log\frac{q(\tau)}{q^*(\tau)}.
+\end{equation}
+
+Taking expectation with respect to any \(q(\tau)\), we obtain
+\begin{equation}
+    \beta \mathbb{E}_{q}[R_\tau] - D_{\mathrm{KL}}(q(\tau)\|p(\tau))
+    = \log Z - D_{\mathrm{KL}}(q(\tau)\|q^*(\tau)).
+\end{equation}
+
+Therefore,
+\begin{equation}
+    \mathbb{E}_{q}[R_\tau]
+    - \frac{1}{\beta}D_{\mathrm{KL}}(q(\tau)\|p(\tau))
+    =
+    \frac{1}{\beta}\log Z
+    - \frac{1}{\beta}D_{\mathrm{KL}}(q(\tau)\|q^*(\tau)),
+\end{equation}
+and the objective is maximized exactly when \(q(\tau)=q^*(\tau)\).
+
+Hence the posterior distribution obtained from Bayes' rule is exactly the same distribution
+that solves the KL-regularized control problem.
+
+\subsection*{Prior, posterior, and notation}
+
+The prior trajectory distribution is
+\begin{equation}
+    p(\tau) = p(s_1)\prod_{t=1}^{N} p(s_{t+1}\mid s_t,a_t)\,\pi(a_t\mid s_t),
+\end{equation}
+with prior initial-state distribution \(p(s_1)\), prior dynamics \(p(s_{t+1}\mid s_t,a_t)\),
+and prior policy \(\pi(a_t\mid s_t)\).
+
+After conditioning on optimality, the posterior trajectory distribution is
+\begin{equation}
+    p(\tau\mid O_{1:N})
+    = \frac{p(\tau)e^{\beta R_\tau}}{\sum_{\tau} p(\tau)e^{\beta R_\tau}}.
+\end{equation}
+
+Thus:
+\begin{equation}
+    p(\tau) \; \text{= prior/uncontrolled trajectory distribution},
+    \qquad
+    p(\tau\mid O_{1:N}) \; \text{= posterior/controlled trajectory distribution}.
+\end{equation}
+
+Before introducing \(O_{1:N}\), the paper writes the controlled distribution as \(p_c(\tau)\).
+After introducing \(O_{1:N}\), the same object is written as the posterior
+\(p(\tau\mid O_{1:N})\).
+
+\subsection*{Constrained and unconstrained decompositions}
+
+If only the policy is optimized, then
+\begin{equation}
+    p(\tau\mid O_{1:N})
+    = p(s_1)\prod_{t=1}^{N} p(s_{t+1}\mid s_t,a_t)\,\pi(a_t\mid s_t,O_{1:N}).
+\end{equation}
+
+If the policy, dynamics, and initial-state distribution are all optimized, then
+\begin{equation}
+    p(\tau\mid O_{1:N})
+    = p(s_1\mid O_{1:N})
+    \prod_{t=1}^{N} p(s_{t+1}\mid s_t,a_t,O_{1:N})\,\pi(a_t\mid s_t,O_{1:N}).
+\end{equation}
+
+The difference is not the target object \(p(\tau\mid O_{1:N})\), but which factors are
+allowed to change during optimization.
+
+In the constrained setting,
+\begin{equation}
+    p(s_1\mid O_{1:N}) = p(s_1),
+    \qquad
+    p(s_{t+1}\mid s_t,a_t,O_{1:N}) = p(s_{t+1}\mid s_t,a_t),
+\end{equation}
+so only the posterior policy changes.
+
+In the unconstrained setting, all factors are updated:
+\begin{equation}
+    p(s_1), \quad p(s_{t+1}\mid s_t,a_t), \quad \pi(a_t\mid s_t)
+    \;\longrightarrow\;
+    p(s_1\mid O_{1:N}), \quad p(s_{t+1}\mid s_t,a_t,O_{1:N}), \quad \pi(a_t\mid s_t,O_{1:N}).
+\end{equation}
+
+\subsection*{Why the optimal policy becomes stochastic}
+
+The KL regularizer turns hard maximization into a soft reweighting. In the paper, the
+optimal policy can be written as
+\begin{equation}
+    \pi^*(a\mid s)
+    = \frac{\pi(a\mid s)\,u(s,a)}{\sum_{a'} \pi(a'\mid s)\,u(s,a')}.
+\end{equation}
+
+As long as multiple actions satisfy
+\(
+\pi(a\mid s)u(s,a)>0,
+\)
+they all retain positive probability. This is why KL-regularized optimization naturally
+produces a stochastic policy.
+
+\section{Introducing \texorpdfstring{$P$}{P}, Non-Absorption, and the Dominant-Eigenvalue Approximation}
+
+\subsection*{The original transition matrix}
+
+Let \(z=(s,a)\) and \(z'=(s',a')\) denote consecutive state-action pairs. The paper defines
+\begin{equation}
+    P_{ji}=p(z'=j\mid z=i)=p(s'\mid s,a)\pi(a'\mid s').
+\end{equation}
+
+This is a stochastic matrix because
+\begin{equation}
+    P_{ji}\ge 0,
+    \qquad
+    \sum_j P_{ji}=1
+    \quad \text{for every } i.
+\end{equation}
+
+In the paper's convention, each column is a conditional probability distribution over next
+state-action pairs.
+
+\subsection*{The tilted matrix and loss of probability mass}
+
+The tilted matrix is defined by
+\begin{equation}
+    \widetilde{P}_{ji} = P_{ji}e^{\beta r_i},
+\end{equation}
+where \(r_i=r(z=i)\).
+
+Since the paper assumes \(r_i\le 0\), we have \(e^{\beta r_i}\le 1\), and therefore
+\begin{equation}
+    \sum_j \widetilde{P}_{ji}
+    = e^{\beta r_i}\sum_j P_{ji}
+    = e^{\beta r_i}\le 1.
+\end{equation}
+
+Thus \(\widetilde{P}\) is not stochastic in general. It is sub-stochastic: probability mass is
+lost at each step, and the missing mass is
+\begin{equation}
+    1-\sum_j \widetilde{P}_{ji} = 1-e^{\beta r_i}.
+\end{equation}
+
+\subsection*{The extended matrix and non-absorption}
+
+To recover a genuine stochastic process, the paper adds an absorbing state and defines the
+extended matrix
+\begin{equation}
+    P =
+    \begin{bmatrix}
+        \widetilde{P} & 0 \\
+        \delta & 1
+    \end{bmatrix},
+\end{equation}
+where
+\begin{equation}
+    \delta_i = 1-\sum_j \widetilde{P}_{ji} = 1-e^{\beta r_i}.
+\end{equation}
+
+The missing probability mass is redirected into the absorbing state. If the process enters
+that state, the trajectory is no longer regarded as optimal. Remaining in the original
+state-action space means the trajectory has survived one more step without being absorbed.
+
+Therefore, conditioning on trajectory optimality is equivalent to conditioning on
+non-absorption for all \(N\) steps.
+
+\subsection*{Meaning of \texorpdfstring{$[\widetilde{P}^{N}]_{ji}$}{[P-tilde\string^N]\_ji}}
+
+For an ordinary stochastic matrix \(P\), \(P^N\) gives \(N\)-step transition probabilities.
+For the sub-stochastic matrix \(\widetilde{P}\),
+\begin{equation}
+    [\widetilde{P}^{N}]_{ji}
+\end{equation}
+is the total weight of all \(N\)-step paths from \(i\) to \(j\) that survive without
+absorption.
+
+Summing over the final state gives the survival probability
+\begin{equation}
+    P(O_{1:N}\mid z_1=i)
+    =
+    \sum_j [\widetilde{P}^{N}]_{ji}.
+\end{equation}
+
+\subsection*{Primitive matrix}
+
+The paper assumes that \(\widetilde{P}\) is primitive.
+
+\paragraph{Definition.}
+A square matrix \(A\in\mathbb{R}^{n\times n}\) with nonnegative entries is called primitive if
+there exists an integer \(m\ge 1\) such that
+\begin{equation}
+    (A^m)_{ij}>0
+    \qquad \text{for all } i,j.
+\end{equation}
+
+Equivalently, some power \(A^m\) is strictly positive.
+
+This is \emph{not} the same definition as irreducible. Irreducibility only says that for each
+pair \(i,j\), there exists at least one path length \(n_{ij}\) with
+\((A^{n_{ij}})_{ij}>0\); the required length may depend on the pair. Primitivity is stronger in
+form: it asks for one common exponent \(m\) such that every entry of \(A^m\) is strictly
+positive at the same time. For a finite nonnegative matrix, the missing ingredient that turns
+irreducibility into primitivity is aperiodicity. Precisely, for a finite nonnegative matrix,
+primitivity is equivalent to:
+\begin{itemize}
+    \item irreducible: for any two indices \(i\) and \(j\), there exists some \(n\ge 1\) such
+    that
+    \begin{equation}
+        (A^n)_{ij}>0;
+    \end{equation}
+    \item aperiodic: first define the period of state \(i\) by
+    \begin{equation}
+        d(i)=\gcd\{n\ge 1:(A^n)_{ii}>0\}.
+    \end{equation}
+    This means: look at all step numbers \(n\) for which the chain can return from \(i\) back
+    to \(i\) in exactly \(n\) steps, and take their greatest common divisor. In an irreducible
+    chain all states have the same period, so one can speak of \emph{the} period of the whole
+    chain. The matrix is called aperiodic when this common period equals \(1\).
+\end{itemize}
+
+This definition is easier to understand by examples. If
+\begin{equation}
+    A=
+    \begin{pmatrix}
+        0 & 1\\
+        1 & 0
+    \end{pmatrix},
+\end{equation}
+then from state \(1\) one can return to state \(1\) only in \(2,4,6,\dots\) steps, so
+\begin{equation}
+    d(1)=\gcd\{2,4,6,\dots\}=2.
+\end{equation}
+The same is true for state \(2\). So this chain is irreducible but periodic, not aperiodic:
+the motion is forced into an exact even-odd alternation.
+
+By contrast, if there is any way to return in two different lengths that are not all multiples
+of the same integer larger than \(1\), then the period becomes \(1\). For example, if a state
+has a self-loop, then one can return in \(1\) step, and immediately
+\begin{equation}
+    d(i)=1.
+\end{equation}
+More generally, if returns are possible in \(2\) and \(3\) steps, then
+\begin{equation}
+    d(i)=\gcd(2,3)=1,
+\end{equation}
+so the chain is aperiodic. Intuitively, aperiodic means there is no rigid clock forcing all
+returns to occur only at times divisible by some fixed integer \(d>1\).
+
+The statement that all states in an irreducible chain have the same period is a standard but
+important fact. Here is the reason. Suppose \(i\) and \(j\) communicate. Then there exist
+integers \(m,n\ge 1\) such that
+\begin{equation}
+    (A^m)_{ji}>0,
+    \qquad
+    (A^n)_{ij}>0.
+\end{equation}
+Now take any return time \(r\) for state \(i\), meaning \((A^r)_{ii}>0\). By concatenating the
+path
+\begin{equation}
+    j \to i \to i \to j,
+\end{equation}
+we obtain a return to \(j\) in exactly \(n+r+m\) steps, so
+\begin{equation}
+    (A^{n+r+m})_{jj}>0.
+\end{equation}
+Therefore every return time \(r\) of \(i\) produces a return time \(n+r+m\) of \(j\). This
+implies that any common divisor of the return times of \(j\) must also divide differences of
+the form
+\begin{equation}
+    (n+r_1+m)-(n+r_2+m)=r_1-r_2,
+\end{equation}
+where \(r_1,r_2\) are return times of \(i\). From this one gets
+\begin{equation}
+    d(j)\mid d(i).
+\end{equation}
+Repeating the same argument with \(i\) and \(j\) exchanged gives
+\begin{equation}
+    d(i)\mid d(j).
+\end{equation}
+Hence
+\begin{equation}
+    d(i)=d(j).
+\end{equation}
+Since irreducibility means every pair of states communicates, all states must share the same
+period.
+
+This assumption is exactly what ensures that the long-time behavior is governed by a single
+dominant mode.
+
+\subsection*{Perron-Frobenius theorem}
+
+For a primitive nonnegative matrix \(A\in\mathbb{R}^{n\times n}\), a standard form of the
+Perron-Frobenius theorem states:
+\begin{quote}
+There exists a real number \(\rho(A)>0\), called the Perron root, such that
+\begin{equation}
+    Av=\rho(A)v,
+    \qquad
+    u^\top A=\rho(A)u^\top
+\end{equation}
+for some vectors \(u,v\in\mathbb{R}^n\) with strictly positive components. Moreover,
+\begin{equation}
+    \rho(A)=\max\{|\lambda|:\lambda\in\sigma(A)\},
+\end{equation}
+\(\rho(A)\) is a simple eigenvalue, and every other eigenvalue \(\lambda\neq \rho(A)\)
+satisfies
+\begin{equation}
+    |\lambda|<\rho(A).
+\end{equation}
+\end{quote}
+
+Applying this to \(A=\widetilde{P}\), the paper obtains a unique dominant eigenvalue
+\(\rho>0\), together with positive right and left eigenvectors \(v\) and \(u\):
+\begin{equation}
+    \widetilde{P}v=\rho v,
+    \qquad
+    u^\top\widetilde{P}=\rho u^\top.
+\end{equation}
+
+The chosen normalization is
+\begin{equation}
+    \sum_i v_i = 1,
+    \qquad
+    \sum_i u_i v_i = 1.
+\end{equation}
+
+\subsection*{Why the theorem works: proof sketch}
+
+The theorem is a strict mathematical result. Its core logic is:
+\begin{itemize}
+    \item primitivity means some power of the matrix is strictly positive;
+    \item repeated multiplication therefore pushes nonzero nonnegative vectors into the
+    interior of the positive cone;
+    \item this positivity and mixing select one preferred growth rate \(\rho\) and one
+    preferred positive direction \(v\);
+    \item applying the same argument to the transpose gives the positive left eigenvector
+    \(u\);
+    \item primitivity rules out competing modes on the spectral circle, so the Perron root is
+    simple and strictly dominates the remaining eigenvalues.
+\end{itemize}
+
+\subsection*{Dominant-eigenvalue approximation}
+
+Because every other eigenmode is suppressed relative to \(\rho^N\), the large-\(N\) behavior
+of the matrix power is
+\begin{equation}
+    [\widetilde{P}^{N}]_{ji}
+    \approx
+    \rho^N u_i v_j.
+\end{equation}
+
+The paper writes the dominant eigenvalue as
+\begin{equation}
+    \rho=e^{-\beta\theta},
+\end{equation}
+so
+\begin{equation}
+    [\widetilde{P}^{N}]_{ji}
+    \approx
+    e^{-\beta\theta N}u_i v_j.
+\end{equation}
+
+Thus the long-time optimality and survival probabilities are controlled by a single scalar
+\(\rho\) together with the two eigenvectors \(u\) and \(v\).
+
+\subsection*{Detailed derivation of Eq.~(15) from Appendix B.1}
+
+This is the step in the paper where the time-dependent posterior dynamics conditioned on
+future optimality are converted into a time-independent ``driven'' Markov kernel. The clean
+way to write it is as follows.
+
+\paragraph{Step 1: notation.}
+Let
+\begin{equation}
+    z_t=(s_t,a_t)\in\mathcal{Z}
+\end{equation}
+denote the state-action pair at time \(t\). The paper uses the index notation
+\begin{equation}
+    z_t=i,
+    \qquad
+    z_{t+1}=j.
+\end{equation}
+Write the future optimality event from time \(t\) onward as
+\begin{equation}
+    O_{t:T}=\{O_t=1,O_{t+1}=1,\dots,O_T=1\}.
+\end{equation}
+In the control-as-inference construction, \(O_t\) is an auxiliary binary variable with
+distribution
+\begin{equation}
+    p(O_t=1\mid z_t=i)=e^{\beta r(i)},
+\end{equation}
+so even after conditioning on \(z_t=i\), the value of \(O_t\) is not deterministic. What is
+true is weaker and more precise: once \(z_t=i\) is fixed, the random variable \(O_t\) carries
+no additional information about future variables because it depends only on the current
+state-action pair. Symbolically,
+\begin{equation}
+    O_t \perp (z_{t+1},\tau_{t+2:T},O_{t+1:T}) \mid z_t .
+\end{equation}
+
+\paragraph{A subtle but important point about the conditioning event.}
+In the main text, the driven kernel is written with conditioning on the whole optimality
+event \(O_{1:T}\). In Appendix B.1, however, the derivation is written using \(O_{t:T}\).
+These are compatible, but one must prove the following conditioning reduction.
+
+Write
+\begin{equation}
+    O_{1:T} = O_{1:t-1}\cap O_t \cap O_{t+1:T}.
+\end{equation}
+\paragraph{Proposition.}
+Under the prior trajectory model,
+\begin{equation}
+    p(z_{t+1}=j\mid z_t=i,O_{1:T})
+    =
+    p(z_{t+1}=j\mid z_t=i,O_{t:T}).
+    \label{eq:reduce-conditioning-window}
+\end{equation}
+
+\paragraph{What Markov does and does not imply.}
+It is important not to misread \eqref{eq:reduce-conditioning-window} as a generic
+``non-neighboring variables are independent'' statement. A first-order Markov property says
+only that
+\begin{equation}
+    p(z_{t+1}\mid z_t,z_{t-1},\dots,z_1)=p(z_{t+1}\mid z_t),
+\end{equation}
+or equivalently,
+\begin{equation}
+    z_{t+1}\perp (z_{t-1},\dots,z_1)\mid z_t.
+\end{equation}
+This does \emph{not} imply that distant variables are unconditionally independent, and it
+does \emph{not} imply that arbitrary conditioning events can be deleted. In the present proof,
+the event \(O_{1:t-1}\) can be removed only because, after conditioning on \(z_t=i\), its
+contribution enters as a common multiplicative factor in both numerator and denominator.
+So Eq.~\eqref{eq:reduce-conditioning-window} is a special consequence of the particular
+factorization of the augmented trajectory model, not a generic Markov-chain identity.
+
+\paragraph{A useful corollary.}
+If \(E\) is any event measurable with respect to the past history
+\(\sigma(z_1,\dots,z_t)\), then the first-order Markov property does imply
+\begin{equation}
+    p(z_{t+1}\mid z_t,E)=p(z_{t+1}\mid z_t),
+\end{equation}
+whenever the conditional probabilities are well-defined. In words: once the current state
+\(z_t\) is fixed, any extra condition built only from the past trajectory carries no further
+information about the next step \(z_{t+1}\). However, this corollary does \emph{not} apply to
+events involving future variables, such as \(O_{t+1:T}\), because those are not measurable
+with respect to the past history.
+
+\paragraph{Proof.}
+Fix \(i,j\in\mathcal{Z}\). By definition,
+\begin{equation}
+    p(z_{t+1}=j\mid z_t=i,O_{1:T})
+    =
+    \frac{
+        p(z_{t+1}=j,O_{1:t-1},O_t,O_{t+1:T}\mid z_t=i)
+    }{
+        p(O_{1:t-1},O_t,O_{t+1:T}\mid z_t=i)
+    }.
+    \label{eq:window-proof-start}
+\end{equation}
+We now use the factorization of the full joint law. Under the prior model,
+\begin{equation}
+    p(\tau_{1:T},O_{1:T})
+    =
+    p(z_1)\prod_{n=1}^{T-1}p(z_{n+1}\mid z_n)\prod_{n=1}^{T}p(O_n\mid z_n),
+    \label{eq:full-joint-factorization}
+\end{equation}
+where \(p(O_n\mid z_n)\) depends only on \(z_n\). The issue is not that
+\(O_{1:T}\) and \(O_{t:T}\) are the same event; they are not. The claim is only that they
+induce the same conditional law for \(z_{t+1}\) once \(z_t=i\) is fixed.
+
+To prove this without handwaving, let
+\begin{equation}
+    x=(z_1,\dots,z_{t-1}),
+    \qquad
+    y=(z_{t+2},\dots,z_T).
+\end{equation}
+Then
+\begin{equation}
+    p(z_{t+1}=j,O_{1:T},z_t=i)
+    =
+    \sum_{x,y} p(x,z_t=i,z_{t+1}=j,y,O_{1:T}).
+\end{equation}
+Using \eqref{eq:full-joint-factorization}, each summand factorizes as
+\begin{align}
+    &p(x,z_t=i,z_{t+1}=j,y,O_{1:T}) \nonumber\\
+    &=
+    \underbrace{
+        p(z_1)\prod_{n=1}^{t-2}p(z_{n+1}\mid z_n)\,
+        p(z_t=i\mid z_{t-1})
+        \prod_{n=1}^{t-1}p(O_n=1\mid z_n)
+    }_{\text{depends only on }x\text{ and }i}
+    \nonumber\\
+    &\quad\times
+    p(O_t=1\mid z_t=i)\,
+    p(z_{t+1}=j\mid z_t=i)\,
+    \underbrace{
+        \prod_{n=t+1}^{T-1}p(z_{n+1}\mid z_n)
+        \prod_{n=t+1}^{T}p(O_n=1\mid z_n)
+    }_{\text{depends only on }j\text{ and }y}.
+    \label{eq:xy-factorization}
+\end{align}
+Now define
+\begin{equation}
+    A_i
+    :=
+    \sum_x
+    p(z_1)\prod_{n=1}^{t-2}p(z_{n+1}\mid z_n)\,
+    p(z_t=i\mid z_{t-1})
+    \prod_{n=1}^{t-1}p(O_n=1\mid z_n),
+\end{equation}
+and
+\begin{equation}
+    H_j
+    :=
+    \sum_y
+    \prod_{n=t+1}^{T-1}p(z_{n+1}\mid z_n)
+    \prod_{n=t+1}^{T}p(O_n=1\mid z_n).
+\end{equation}
+Then \eqref{eq:xy-factorization} implies
+\begin{equation}
+    p(z_{t+1}=j,O_{1:T},z_t=i)
+    =
+    A_i\,
+    p(O_t=1\mid z_t=i)\,
+    p(z_{t+1}=j\mid z_t=i)\,
+    H_j.
+    \label{eq:joint-factor-numerator}
+\end{equation}
+Summing over \(j\) gives
+\begin{equation}
+    p(O_{1:T},z_t=i)
+    =
+    A_i\,
+    p(O_t=1\mid z_t=i)\,
+    \sum_{j'} p(z_{t+1}=j'\mid z_t=i)\,H_{j'}.
+\end{equation}
+Therefore
+\begin{equation}
+    p(z_{t+1}=j\mid z_t=i,O_{1:T})
+    =
+    \frac{
+        p(z_{t+1}=j, O_{1:T}, z_t=i)
+    }{
+        p(O_{1:T}, z_t=i)
+    }
+    =
+    \frac{
+        p(z_{t+1}=j\mid z_t=i)\,H_j
+    }{
+        \sum_{j'} p(z_{t+1}=j'\mid z_t=i)\,H_{j'}
+    }.
+    \label{eq:reduced-fraction}
+\end{equation}
+The factors \(A_i\) and \(p(O_t=1\mid z_t=i)\) cancel completely.
+
+On the other hand, using Bayes' rule directly for the shorter conditioning event gives
+\begin{equation}
+    p(z_{t+1}=j\mid z_t=i,O_{t:T})
+    =
+    \frac{
+        p(z_{t+1}=j\mid z_t=i)\,
+        p(O_t=1\mid z_t=i)\,
+        H_j
+    }{
+        \sum_{j'} p(z_{t+1}=j'\mid z_t=i)\,
+        p(O_t=1\mid z_t=i)\,
+        H_{j'}
+    }
+    =
+    \frac{
+        p(z_{t+1}=j\mid z_t=i)\,H_j
+    }{
+        \sum_{j'} p(z_{t+1}=j'\mid z_t=i)\,H_{j'}
+    }.
+\end{equation}
+Comparing with \eqref{eq:reduced-fraction} proves \eqref{eq:reduce-conditioning-window}.
+\hfill\(\square\)
+
+So Appendix B.1 is not changing the definition of the driven process; it is only using the
+fact that, after conditioning on the current state-action pair \(z_t=i\), the past event
+\(O_{1:t-1}\) and the current auxiliary variable \(O_t\) do not change the conditional law of
+the next state-action pair beyond what is already contained in the future event \(O_{t:T}\).
+
+\paragraph{Step 2: define the two kernels carefully.}
+The paper defines the tilted kernel
+\begin{equation}
+    \widetilde{P}_{ji}
+    =
+    p(z_{t+1}=j\mid z_t=i)e^{\beta r(i)},
+\end{equation}
+which is time-independent, and the driven kernel
+\begin{equation}
+    [P_d^{(t,T)}]_{ji}
+    :=
+    p(z_{t+1}=j\mid z_t=i, O_{t:T}),
+\end{equation}
+which may depend on both \(t\) and \(T\) before the long-time limit is taken.
+
+\paragraph{Step 3: factor the posterior transition in two different ways.}
+Consider the joint conditional probability of the next state-action pair and the remaining
+future path:
+\begin{equation}
+    p(z_{t+1}=j,\tau_{t+2:T}\mid z_t=i,O_{t:T}).
+\end{equation}
+Using the chain rule under the conditioned process gives
+\begin{equation}
+    p(z_{t+1}=j,\tau_{t+2:T}\mid z_t=i,O_{t:T})
+    =
+    p(\tau_{t+2:T}\mid z_{t+1}=j,z_t=i,O_{t:T})\,
+    p(z_{t+1}=j\mid z_t=i,O_{t:T}).
+\end{equation}
+By the Markov property, once \(z_{t+1}=j\) is fixed, the future no longer depends on
+\(z_t=i\). Also, after moving to time \(t+1\), the relevant optimality event becomes
+\(O_{t+1:T}\). Hence
+\begin{equation}
+    p(\tau_{t+2:T}\mid z_{t+1}=j,z_t=i,O_{t:T})
+    =
+    p(\tau_{t+2:T}\mid z_{t+1}=j,O_{t+1:T}),
+\end{equation}
+so
+\begin{equation}
+    p(z_{t+1}=j,\tau_{t+2:T}\mid z_t=i,O_{t:T})
+    =
+    p(\tau_{t+2:T}\mid z_{t+1}=j,O_{t+1:T})\,[P_d^{(t,T)}]_{ji}.
+    \label{eq:driven-factorization}
+\end{equation}
+This is Appendix B.1, Eq.~(B1), but with explicit time labels.
+
+The logical content of this step is only the chain rule plus a conditional Markov property.
+Nothing deeper is being used. More explicitly, the equality
+\begin{equation}
+    p(\tau_{t+2:T}\mid z_{t+1}=j,z_t=i,O_{t:T})
+    =
+    p(\tau_{t+2:T}\mid z_{t+1}=j,O_{t+1:T})
+\end{equation}
+holds because:
+\begin{itemize}
+    \item once \(z_{t+1}=j\) is fixed, the later path \(\tau_{t+2:T}\) no longer depends on
+    \(z_t=i\);
+    \item the variable \(O_t\) is not deterministic given \(z_t=i\), but it is conditionally
+    independent of the future tail once \(z_t=i\) is fixed;
+    \item the event \(O_{t+1}\) depends only on \(z_{t+1}=j\), so after conditioning on
+    \(z_{t+1}=j\) it adds no further information about \(\tau_{t+2:T}\);
+    \item the only remaining random constraints affecting the tail path are exactly the future
+    events \(O_{t+1:T}\).
+\end{itemize}
+So the first factorization in Appendix B.1 is legitimate, but only after making this
+conditioning reduction explicit.
+
+\paragraph{Step 4: rewrite the same quantity using Bayes reweighting.}
+From the posterior trajectory formula
+\begin{equation}
+    p(\tau_{t:T}\mid O_{t:T})
+    \propto
+    p(\tau_{t:T})e^{\beta\sum_{n=t}^{T}r(z_n)},
+\end{equation}
+conditioning additionally on \(z_t=i\) yields
+\begin{equation}
+    p(z_{t+1}=j,\tau_{t+2:T}\mid z_t=i,O_{t:T})
+    =
+    \frac{
+        p(z_{t+1}=j,\tau_{t+2:T},O_{t:T}\mid z_t=i)
+    }{
+        p(O_{t:T}\mid z_t=i)
+    }.
+\end{equation}
+Now use the fact that the immediate reward term \(e^{\beta r(i)}\) is attached to the
+transition out of \(i\), and the remaining future event is \(O_{t+1:T}\). Then
+\begin{equation}
+    p(z_{t+1}=j,\tau_{t+2:T},O_{t:T}\mid z_t=i)
+    =
+    \widetilde{P}_{ji}\,
+    p(\tau_{t+2:T},O_{t+1:T}\mid z_{t+1}=j).
+\end{equation}
+Therefore
+\begin{equation}
+    p(z_{t+1}=j,\tau_{t+2:T}\mid z_t=i,O_{t:T})
+    =
+    \frac{
+        \widetilde{P}_{ji}\,
+        p(\tau_{t+2:T},O_{t+1:T}\mid z_{t+1}=j)
+    }{
+        p(O_{t:T}\mid z_t=i)
+    }.
+    \label{eq:bayes-factorization}
+\end{equation}
+This is the content of Eq.~(B2).
+
+\paragraph{Step 5: compare the two factorizations.}
+Using
+\begin{equation}
+    p(\tau_{t+2:T}\mid z_{t+1}=j,O_{t+1:T})
+    =
+    \frac{
+        p(\tau_{t+2:T},O_{t+1:T}\mid z_{t+1}=j)
+    }{
+        p(O_{t+1:T}\mid z_{t+1}=j)
+    },
+\end{equation}
+and comparing \eqref{eq:driven-factorization} with \eqref{eq:bayes-factorization}, we obtain
+\begin{equation}
+    [P_d^{(t,T)}]_{ji}
+    =
+    \widetilde{P}_{ji}\,
+    \frac{
+        p(O_{t+1:T}\mid z_{t+1}=j)
+    }{
+        p(O_{t:T}\mid z_t=i)
+    }.
+    \label{eq:finite-time-driven}
+\end{equation}
+This is Appendix B.1, Eq.~(B3). Up to this point, nothing has been approximated.
+
+It is useful to pause here and introduce a notation for the finite-time objects that appear
+before any large-deviation limit is taken. Define the backward survival weight
+\begin{equation}
+    u_t(i) := p(O_{t:T}\mid z_t=i),
+\end{equation}
+and the forward weight
+\begin{equation}
+    v_t(i) := p(z_t=i,O_{1:t-1}).
+\end{equation}
+These are the natural finite-horizon analogues of the asymptotic left and right Perron
+eigenvectors, but at this stage they are \emph{not} eigenvectors. They are simply conditional
+and joint probabilities associated with a fixed finite horizon \(T\).
+
+At finite horizon, the corresponding optimal policy is naturally time-dependent:
+\begin{equation}
+    \pi_t^*(a\mid s)
+    =
+    \frac{\pi(a\mid s)\,u_t(s,a)}
+    {\sum_{\bar a}\pi(\bar a\mid s)\,u_t(s,\bar a)}.
+\end{equation}
+Only in the long-time limit, when \(u_t(s,a)\sim \rho^{\,T-t}u(s,a)\), does the common factor
+\(\rho^{T-t}\) cancel so that one obtains the stationary form
+\begin{equation}
+    \pi^*(a\mid s)
+    \propto
+    \pi(a\mid s)\,u(s,a).
+\end{equation}
+
+With this notation, Eq.~\eqref{eq:finite-time-driven} can be rewritten as
+\begin{equation}
+    [P_d^{(t,T)}]_{ji}
+    =
+    \widetilde{P}_{ji}\frac{u_{t+1}(j)}{u_t(i)}.
+\end{equation}
+So the finite-time driven kernel is obtained by reweighting \(\widetilde P\) with the ratio of
+future-optimality probabilities at two consecutive times. This is the exact finite-horizon
+formula; no Perron-Frobenius approximation has entered yet.
+
+The two weights satisfy simple recursions. The backward weight obeys
+\begin{equation}
+    u_t(i)=\sum_j \widetilde{P}_{ji}u_{t+1}(j),
+    \qquad
+    u_T(i)=p(O_T\mid z_T=i)=e^{\beta r(i)},
+\end{equation}
+or, depending on whether one chooses to attach the final reward to the last transition or to
+the last state-action itself, an equivalent terminal normalization. In vector form this is the
+backward recursion
+\begin{equation}
+    u_t = \widetilde P^\top u_{t+1}.
+\end{equation}
+Likewise, the forward weight satisfies
+\begin{equation}
+    v_{t+1}(j)=\sum_i \widetilde{P}_{ji}v_t(i),
+\end{equation}
+with \(v_1\) fixed by the initial state-action distribution. In vector form,
+\begin{equation}
+    v_{t+1}=\widetilde P\, v_t.
+\end{equation}
+
+Now the key probabilistic meaning of the product \(u_t(i)v_t(i)\) is:
+\begin{equation}
+    u_t(i)v_t(i)
+    =
+    p(z_t=i,O_{1:T}).
+\end{equation}
+Indeed,
+\begin{equation}
+    p(z_t=i,O_{1:T})
+    =
+    p(z_t=i,O_{1:t-1})\,p(O_{t:T}\mid z_t=i)
+    =
+    v_t(i)u_t(i).
+\end{equation}
+Therefore, after normalization over \(i\),
+\begin{equation}
+    p_t(i)
+    :=
+    \frac{u_t(i)v_t(i)}{\sum_k u_t(k)v_t(k)}
+    =
+    p(z_t=i\mid O_{1:T}).
+\end{equation}
+This is the exact time-\(t\) conditioned marginal distribution of the state-action pair in a
+finite trajectory conditioned on global optimality.
+
+This is precisely the object that later appears in the code for Figure 2. The arrays called
+\texttt{u\_in\_time} and \texttt{v\_in\_time} are discrete implementations of these finite-time
+backward and forward weights. Their entrywise product, after normalization, is not an
+arbitrary heuristic quantity: it is the exact conditioned marginal
+\begin{equation}
+    p(z_t\mid O_{1:T})
+\end{equation}
+for the chosen finite horizon \(T\).
+
+By contrast, the time-independent objects \(u(i)\) and \(v(i)\) that appear later are the
+left and right Perron eigenvectors of \(\widetilde P\) in the long-time limit. Their product,
+after the normalization
+\begin{equation}
+    \sum_i v_i=1,
+    \qquad
+    \sum_i u_i v_i=1,
+\end{equation}
+defines the bulk approximation
+\begin{equation}
+    p_{\mathrm{bulk}}(i):=u(i)v(i).
+\end{equation}
+So there is an essential distinction:
+\begin{equation}
+    p_t(i)=p(z_t=i\mid O_{1:T})
+    \quad \text{is exact for finite } T,
+\end{equation}
+whereas
+\begin{equation}
+    p_{\mathrm{bulk}}(i)=u(i)v(i)
+\end{equation}
+is the asymptotic approximation valid in the interior bulk region of a long trajectory. The
+paper's statement that
+\begin{equation}
+    \frac{u(s_t,a_t)v(s_t,a_t)}{p(s_t,a_t\mid O_{1:T})}\approx 1
+\end{equation}
+in the bulk region is precisely the claim that
+\begin{equation}
+    p_{\mathrm{bulk}}(z_t)\approx p(z_t\mid O_{1:T})
+\end{equation}
+when \(t\) is far from the two boundaries and \(T\) is large.
+
+\paragraph{Step 6: express the survival probabilities by powers of \(\widetilde{P}\).}
+Let \(N=T-t\). Then
+\begin{equation}
+    p(O_{t:T}\mid z_t=i)
+    =
+    \sum_{k\in\mathcal{Z}}[\widetilde{P}^{N}]_{ki},
+\end{equation}
+because we sum the weights of all \(N\)-step surviving paths starting from \(i\). Likewise,
+\begin{equation}
+    p(O_{t+1:T}\mid z_{t+1}=j)
+    =
+    \sum_{k\in\mathcal{Z}}[\widetilde{P}^{N-1}]_{kj}.
+\end{equation}
+Now assume \(\widetilde{P}\) is primitive, and let \(u,v\) be the positive left and right
+Perron eigenvectors normalized by
+\begin{equation}
+    u^\top \widetilde{P}=\rho u^\top,
+    \qquad
+    \widetilde{P}v=\rho v,
+    \qquad
+    \sum_i v_i=1,
+    \qquad
+    \sum_i u_iv_i=1.
+\end{equation}
+Then for large \(N\),
+\begin{equation}
+    [\widetilde{P}^{N}]_{ki}
+    \approx
+    \rho^N v_k u_i,
+\end{equation}
+so summing over \(k\) gives
+\begin{equation}
+    p(O_{t:T}\mid z_t=i)
+    \approx
+    \rho^N u_i \sum_k v_k
+    =
+    \rho^N u_i,
+\end{equation}
+and similarly
+\begin{equation}
+    p(O_{t+1:T}\mid z_{t+1}=j)
+    \approx
+    \rho^{N-1}u_j.
+\end{equation}
+
+\paragraph{Step 7: take the long-time limit.}
+Substituting these asymptotics into \eqref{eq:finite-time-driven} yields
+\begin{equation}
+    [P_d]_{ji}
+    =
+    \lim_{N\to\infty}[P_d^{(t,T)}]_{ji}
+    =
+    \widetilde{P}_{ji}\frac{\rho^{N-1}u_j}{\rho^N u_i}
+    =
+    \frac{\widetilde{P}_{ji}u_j}{\rho\,u_i}.
+\end{equation}
+Using the paper's notation
+\begin{equation}
+    \rho=e^{-\beta\theta},
+\end{equation}
+we obtain the main-text Eq.~(15):
+\begin{equation}
+    [P_d]_{ji}
+    =
+    \frac{\widetilde{P}_{ji}u_j}{e^{-\beta\theta}u_i}.
+    \label{eq:doob-h-transform}
+\end{equation}
+
+\paragraph{Step 8: why this is called a Doob \(h\)-transform.}
+If we define \(h(i)=u_i>0\), then \eqref{eq:doob-h-transform} can be written as
+\begin{equation}
+    [P_d]_{ji}
+    =
+    \frac{1}{\rho}\,
+    \widetilde{P}_{ji}\,
+    \frac{h(j)}{h(i)}.
+\end{equation}
+This is exactly the Doob \(h\)-transform of the sub-stochastic kernel \(\widetilde{P}\)
+using the positive harmonic function \(h=u\). The role of the factor \(h(j)/h(i)\) is to
+reweight transitions toward paths that are more compatible with long-time survival
+(equivalently, long-time optimality).
+
+\subsection*{Interpretation of the eigenvectors}
+
+In the paper's later formulas:
+\begin{itemize}
+    \item \(u_i\) measures how favorable the current state-action pair \(i\) is for long-time
+    survival or optimality;
+    \item \(v_j\) describes the long-time distribution over surviving trajectories.
+\end{itemize}
+
+This is why the optimal policy is later expressed in terms of the left eigenvector \(u\).
+
+\subsection*{Why this matters for the paper}
+
+The point of the whole construction is that the large-\(N\) survival weights acquire a
+universal form:
+\begin{equation}
+    [\widetilde{P}^{N}]_{ji}\sim \rho^N u_i v_j.
+\end{equation}
+
+Therefore
+\begin{equation}
+    P(O_{1:N}\mid z_1=i)
+    =
+    \sum_j [\widetilde{P}^{N}]_{ji}
+    \approx
+    \rho^N u_i,
+\end{equation}
+since the normalization \(\sum_j v_j=1\) is used.
+
+This is the origin of the paper's statement that the long-time optimality probability decays
+exponentially with \(N\), with a state-dependent prefactor \(u_i\).
+
+\subsection*{References}
+
+Useful references for the mathematical background are:
+\begin{itemize}
+    \item Levin and Peres, \emph{Markov Chains and Mixing Times}, cited as Ref.~[32] in the
+    paper;
+    \item van Doorn and Pollett, \emph{Quasi-stationary distributions for discrete-state
+    models}, cited as Ref.~[34];
+    \item Encyclopedia of Mathematics, ``Perron-Frobenius theorem'';
+    \item Wolfram MathWorld, ``Perron-Frobenius Theorem''.
+\end{itemize}
+
+\section{Implementation Logic of the EntRegRL Project}
+
+\subsection*{Overall map of the codebase}
+
+The project is organized around four top-level Python files:
+\begin{itemize}
+    \item \texttt{frozen\_lake\_env.py}: defines the finite Markov decision process itself;
+    \item \texttt{utils.py}: converts that MDP into sparse linear-algebra objects and solves the
+    Perron-eigenvalue problem;
+    \item \texttt{main.py}: runs the concrete experiments that produce the figures in the paper;
+    \item \texttt{visualization.py}: turns arrays such as state distributions or policies into
+    plots on top of the maze layout.
+\end{itemize}
+
+The cleanest way to read the code is not file by file in isolation, but as one pipeline:
+\begin{equation}
+    \text{map layout}
+    \;\longrightarrow\;
+    \text{finite MDP}
+    \;\longrightarrow\;
+    \text{sparse dynamics and rewards}
+    \;\longrightarrow\;
+    P,\widetilde{P}
+    \;\longrightarrow\;
+    (\rho,u,v)
+    \;\longrightarrow\;
+    \pi^*,\; p^*,\; \text{bulk distribution}
+    \;\longrightarrow\;
+    \text{figures}.
+\end{equation}
+
+So the four files are not four independent modules. They sit at four different conceptual
+layers of the same derivation.
+
+\subsection*{File 1: \texttt{frozen\_lake\_env.py} constructs the finite MDP}
+
+This file answers the question: \emph{what is the uncontrolled process we are studying?}
+Everything else in the project assumes that this object already exists.
+
+The local class \texttt{DiscreteEnv} provides a minimal Gym-style discrete environment:
+\begin{equation}
+    \texttt{reset()} \to s_0,
+    \qquad
+    \texttt{step}(a_t) \to (s_{t+1}, r_t, done, truncated, info).
+\end{equation}
+This part is standard environment machinery: it stores the current state, samples from a
+categorical transition distribution, and returns the realized next state and reward.
+
+Since this terminology can be unfamiliar, it is worth unpacking it carefully.
+
+Gym is a standard Python interface for reinforcement-learning environments. The basic idea is
+that an environment is an object with a very small public API:
+\begin{itemize}
+    \item it can be reset to start a new episode;
+    \item it can receive an action from the agent;
+    \item it can return the next observation, reward, and termination flags.
+\end{itemize}
+
+In a \emph{discrete} environment, both the state space and the action space are finite. So
+instead of continuous vectors, the code can label states and actions by integers:
+\begin{equation}
+    s \in \{0,1,\dots,n_S-1\},
+    \qquad
+    a \in \{0,1,\dots,n_A-1\}.
+\end{equation}
+
+The word \emph{minimal} means that the local class \texttt{DiscreteEnv} only implements the
+small amount of machinery needed for this project. It is not a full-featured simulator. It
+just provides the essentials.
+
+The class stores several pieces of data:
+\begin{itemize}
+    \item \texttt{nS}: the number of states;
+    \item \texttt{nA}: the number of actions;
+    \item \texttt{P}: the transition dictionary;
+    \item \texttt{isd}: the initial-state distribution;
+    \item \texttt{s}: the current state of the environment.
+\end{itemize}
+
+The meaning of \texttt{isd} is especially important. It is a probability vector over initial
+states:
+\begin{equation}
+    \texttt{isd}[s] = p(s_0 = s).
+\end{equation}
+So when the environment is reset, it does not necessarily always start from the same state; it
+samples the initial state from this distribution.
+
+Gym environments conventionally expose the types of actions and observations they support.
+Here the code sets
+\begin{equation}
+    \texttt{action\_space} = \mathrm{Discrete}(n_A),
+    \qquad
+    \texttt{observation\_space} = \mathrm{Discrete}(n_S).
+\end{equation}
+This simply tells outside code that:
+\begin{itemize}
+    \item valid actions are integers from \(0\) to \(n_A-1\);
+    \item observations are integers from \(0\) to \(n_S-1\).
+\end{itemize}
+In this project, the observation is just the state label itself, so there is no extra
+observation-processing layer.
+
+Calling \texttt{reset()} means: start a fresh trajectory. Concretely, the method samples
+\begin{equation}
+    s_0 \sim \texttt{isd},
+\end{equation}
+stores that sampled state as the new current state, clears the record of the last action, and
+returns the state label.
+
+So \texttt{reset()} is the operation that initializes one episode or one rollout.
+
+Calling \texttt{step(a)} means: apply action \(a\) in the current state \(s\). The method then
+looks up the list
+\begin{equation}
+    \texttt{P[s][a]} = [(p_1,s'_1,r_1,d_1),\dots,(p_m,s'_m,r_m,d_m)].
+\end{equation}
+This list represents all possible outcomes of taking action \(a\) in state \(s\).
+
+The environment samples one of these outcomes according to the probabilities \(p_k\). If the
+sampled outcome is \((p,s',r,d)\), then:
+\begin{itemize}
+    \item the current state is updated to \(s'\);
+    \item the reward \(r\) is returned;
+    \item the termination flag \(d\) is returned.
+\end{itemize}
+
+Here the symbol \(d_k\) means a boolean terminal flag attached to the \(k\)-th possible
+transition outcome. If \(d_k=\texttt{True}\), that outcome ends the episode in the usual RL
+sense; if \(d_k=\texttt{False}\), the trajectory continues. In this code there is also a
+separate variable \texttt{truncated}, which is used when an outer \texttt{TimeLimit} wrapper
+forces the rollout to stop after a fixed number of steps. So one can think of
+\texttt{done}/\(d_k\) as ``the environment itself says stop'' and \texttt{truncated} as ``the
+experiment script externally cuts the trajectory here''.
+
+So \texttt{step(a)} is just a sampled realization of the MDP kernel
+\begin{equation}
+    p(s_{t+1},r_t,d_t \mid s_t,a_t).
+\end{equation}
+However, in the present implementation the reward is actually assigned before the next state is
+used in any essential way. The code computes \texttt{rew} from the current cell type
+\texttt{letter} and from whether the executed move is diagonal; it does not use
+\texttt{newletter} to choose among different reward values. So for the environments used in
+this project, the one-step reward is effectively a function of the current state-action pair,
+\begin{equation}
+    r(z)=r(s,a),
+\end{equation}
+rather than a genuinely next-state-dependent quantity \(r(s,a,s')\).
+
+Even though \texttt{DiscreteEnv} is simple, it is sufficient because the rest of the project
+only needs two perspectives on the same process:
+\begin{itemize}
+    \item a \emph{simulation view}, where trajectories are generated by repeated calls to
+    \texttt{reset()} and \texttt{step()};
+    \item a \emph{model view}, where the full transition dictionary \texttt{P} is read
+    directly and converted into matrices.
+\end{itemize}
+
+This dual role is exactly why the class is useful. It is simultaneously:
+\begin{itemize}
+    \item an executable simulator of trajectories;
+    \item an explicit tabulation of the finite MDP.
+\end{itemize}
+
+The real mathematical content appears in the subclass \texttt{ModifiedFrozenLake}. Its most
+important output is the transition dictionary
+\begin{equation}
+    \texttt{P[s][a]} = \bigl[(p_1,s'_1,r_1,d_1),\dots,(p_m,s'_m,r_m,d_m)\bigr].
+\end{equation}
+This is a literal tabulation of the finite MDP. For each present state \(s\) and action
+\(a\), the code stores every possible outcome:
+\begin{itemize}
+    \item transition probability \(p_k\),
+    \item next state \(s'_k\),
+    \item one-step reward \(r_k\),
+    \item terminal flag \(d_k\).
+\end{itemize}
+
+Mathematically, this is the code representation of
+\begin{equation}
+    p(s_{t+1},r_t,\mathrm{done}_t \mid s_t,a_t).
+\end{equation}
+Later files never rebuild the environment from scratch; they simply read this explicit MDP.
+
+The map is first stored as a character array \texttt{desc}. If the grid has shape
+\((n_{\mathrm{row}},n_{\mathrm{col}})\), then the file defines
+\begin{equation}
+    n_S = n_{\mathrm{row}}n_{\mathrm{col}}.
+\end{equation}
+The helper
+\begin{equation}
+    \texttt{to\_s(row,col)} = row \cdot n_{\mathrm{col}} + col
+\end{equation}
+flattens each lattice site into one integer state label. This is important because every
+later matrix in the project assumes that states are already encoded as integers
+\(s \in \{0,\dots,n_S-1\}\).
+
+The file does not treat the grid as a passive picture. Each symbol changes the transition law
+or reward law:
+\begin{itemize}
+    \item \(S\): start state;
+    \item \(F\): ordinary free cell;
+    \item \(G\): goal;
+    \item \(H\): hole;
+    \item \(W\): wall;
+    \item \(C\): candy, which increases reward;
+    \item \(N\): nail, which decreases reward.
+\end{itemize}
+So the map is already a compact encoding of both geometry and cost landscape.
+
+The constructor supports several action alphabets: \(2,3,4,5,8,9\) actions. The helper
+\texttt{inc(row,col,action)} implements the kinematic rule
+\begin{equation}
+    (row,col,a) \mapsto (row',col').
+\end{equation}
+For example, with four actions the allowed moves are left, down, right, up; with five actions
+there is also a stay action; with eight or nine actions diagonal moves are added.
+
+This means that the file defines not just a reward function, but the underlying directed graph
+on which trajectories move.
+
+The helper \texttt{compute\_transition\_dynamics(...)} enumerates all outcomes for a chosen
+intended action. If \texttt{slippery = 0}, then the executed action is deterministic. If
+\texttt{slippery \(\neq 0\)}, the intended action is mixed with neighboring actions. Thus the
+file directly builds the kernel
+\begin{equation}
+    p(s' \mid s,a)
+\end{equation}
+by explicit case analysis.
+
+The reward in this environment is not a separate post-processing step. It is created at the
+same time as the transition law. The code applies:
+\begin{itemize}
+    \item a step cost \(-\texttt{step\_penalization}\),
+    \item an additional penalty on nails,
+    \item an additional bonus on candy,
+    \item a terminal bonus at goals,
+    \item a terminal penalty at holes.
+\end{itemize}
+So each entry in \texttt{P[s][a]} already carries the one-step reward attached to the current
+state-action pair. Even though the transition dictionary stores that reward alongside each
+possible next state, in the present code the numerical reward value is the same across all
+outcomes associated with a fixed current \(z=(s,a)\), except for differences caused by which
+action is actually executed when the environment is slippery.
+
+These two parameters are conceptually important for the paper:
+\begin{itemize}
+    \item \texttt{cyclic\_mode} makes hole states restart from the initial-state distribution
+    instead of absorbing permanently;
+    \item \texttt{never\_done} allows goal states to remain inside a continuing process rather
+    than ending the episode.
+\end{itemize}
+This is not merely a coding convenience. The theory in the paper is fundamentally about
+long-time trajectory ensembles and Perron eigenvectors of a continuing process, so the code
+often prefers a non-terminating or effectively recycled dynamics.
+\medskip
+\texttt{frozen\_lake\_env.py} is the place where the abstract symbols
+\(s,a,p(s'|s,a),r(s,a,s')\) become concrete finite arrays and dictionaries. It is the model
+definition layer of the project.
+
+\subsection*{File 2: \texttt{utils.py} converts the MDP into the paper's linear-algebra objects}
+
+Once \texttt{env.P} is available, the next task is to rewrite the finite MDP in a form that
+sparse linear algebra can handle efficiently. That is the job of \texttt{utils.py}. This file
+contains the mathematical core of the implementation.
+
+The function \texttt{get\_dynamics\_and\_rewards(env)} reads every entry of
+\texttt{env.P[s][a]} and constructs two sparse objects.
+
+First, it builds \texttt{dynamics} with shape
+\begin{equation}
+    (n_S,\; n_S n_A).
+\end{equation}
+The column index is
+\begin{equation}
+    i = s n_A + a,
+\end{equation}
+so each column corresponds to one state-action pair \(z=(s,a)\). The row index is the next
+state \(s'\). Therefore
+\begin{equation}
+    \texttt{dynamics}[s',\, s n_A + a] = p(s' \mid s,a).
+\end{equation}
+
+This is a very important design choice. The code does not keep a 3-index tensor
+\(p(s'|s,a)\). Instead it flattens the pair \((s,a)\) into one index, so that all later
+operations can be expressed as sparse matrix products.
+
+Second, it builds \texttt{rewards}. In principle, if an environment had a genuinely
+next-state-dependent reward \(r(s,a,s')\), then one would need to average over \(s'\) to
+produce a single state-action observable for each column. But in the present implementation the
+reward is already effectively attached to the current state-action pair \(z=(s,a)\). So what
+\texttt{get\_dynamics\_and\_rewards} stores is simply that state-action reward:
+\begin{equation}
+    \texttt{rewards}[s,a]=r(s,a).
+\end{equation}
+Because the code constructs the sparse matrix by summing all entries associated with the same
+column, it may look formally like an expectation over next states, but in the environments used
+here that sum is trivial: all nonzero contributions in a fixed \((s,a)\) column carry the same
+reward value. Therefore no substantive averaging is taking place in the current project.
+
+This state-action reward is the quantity that later enters the diagonal tilt
+\(\mathrm{diag}(e^{\beta r_i})\).
+
+The paper's main matrix \(P\) is not a state-to-state kernel. It is a state-action to
+state-action kernel. The function \texttt{get\_mdp\_transition\_matrix(dynamics, policy)}
+implements
+\begin{equation}
+    P_{ji} = p(z_{t+1}=j \mid z_t=i)
+    = p(s'|s,a)\pi(a'|s').
+\end{equation}
+
+Operationally, this function does two things:
+\begin{itemize}
+    \item use \texttt{dynamics} to move from the current state-action pair \((s,a)\) to a next
+    state \(s'\);
+    \item use the policy to attach a next action \(a'\) to that next state.
+\end{itemize}
+So it turns the state-level environment kernel into a Markov chain on the enlarged
+state-action space \(z=(s,a)\).
+
+If \(D=n_S n_A\), then the resulting matrix has shape
+\begin{equation}
+    (D,D).
+\end{equation}
+This is the code object corresponding directly to the paper's \(P\).
+
+These two functions implement the central mathematical statement of the paper:
+\begin{equation}
+    \widetilde{P} = P \, \mathrm{diag}(e^{\beta r_i}),
+\end{equation}
+then solve for its dominant eigenvalue and left/right Perron eigenvectors.
+
+The code names the tilted matrix \texttt{M}. Its construction is:
+\begin{enumerate}
+    \item build \(P\) from \texttt{dynamics} and the prior policy;
+    \item build the diagonal matrix
+    \begin{equation}
+        T = \mathrm{diag}(e^{\beta r_i});
+    \end{equation}
+    \item multiply
+    \begin{equation}
+        M = P T.
+    \end{equation}
+\end{enumerate}
+
+This is exactly the paper's tilted operator, only under the variable name \texttt{M}.
+The iterative updates are
+\begin{equation}
+    u_{k+1} \propto M^\top u_k,
+    \qquad
+    v_{k+1} \propto M v_k.
+\end{equation}
+So:
+\begin{itemize}
+    \item \texttt{u} approximates the left Perron eigenvector;
+    \item \texttt{v} approximates the right Perron eigenvector;
+    \item \texttt{l} approximates the dominant eigenvalue \(\rho\).
+\end{itemize}
+
+This matches the interpretation developed earlier in the note:
+\begin{itemize}
+    \item \(u\) contains the state-action dependent future survival or future optimality
+    weight;
+    \item \(v\) describes the asymptotic incoming distribution of surviving trajectories;
+    \item \(\rho\) determines the exponential growth or decay rate of the tilted process.
+\end{itemize}
+
+The existence of both \texttt{solve\_unconstrained} and
+\texttt{solve\_unconstrained\_v1} can look redundant, but conceptually they solve the same
+problem. The difference is numerical stabilization:
+\begin{itemize}
+    \item \texttt{solve\_unconstrained} uses more aggressive rescaling heuristics, including an
+    explicit \texttt{M\_scale}, to keep large-\(\beta\) runs stable;
+    \item \texttt{solve\_unconstrained\_v1} is a cleaner power method with norm-based
+    normalization.
+\end{itemize}
+So these are not different algorithms in the conceptual sense. They are two numerical
+implementations of the same Perron-eigenproblem.
+
+After obtaining \((l,u,v)\), the solver reconstructs the quantities that matter physically.
+
+First, it computes the optimal policy by the Doob-transform-like formula
+\begin{equation}
+    \pi^*(a|s)
+    =
+    \frac{u(s,a)\pi(a|s)}
+    {\sum_{a'} u(s,a')\pi(a'|s)}.
+\end{equation}
+This is precisely the policy reweighting predicted by the theory.
+
+Second, it computes a state-level factor
+\begin{equation}
+    \chi(s) = \sum_a u(s,a)\pi(a|s),
+\end{equation}
+multiplies the state transition matrix by \(\chi\), and renormalizes columns. This produces
+\texttt{optimal\_dynamics}, which is the code's realization of the driven process or optimal
+dynamics.
+
+Third, it normalizes \(u\) and \(v\) so that
+\begin{equation}
+    \sum_i v_i = 1,
+    \qquad
+    \sum_i u_i v_i = 1,
+\end{equation}
+and then forms the entrywise product \(u_i v_i\). Summing this over actions yields an
+estimated bulk state distribution. This is the long-time occupancy measure in the tilted
+ensemble.
+
+\texttt{utils.py} also contains smaller but conceptually useful helpers:
+\begin{itemize}
+    \item \texttt{compute\_policy\_induced\_distribution}: propagates a policy forward for a
+    fixed number of steps;
+    \item \texttt{compute\_max\_kl\_divergence}: compares distributions;
+    \item \texttt{test\_policy}: performs Monte Carlo rollouts in the actual environment.
+\end{itemize}
+These routines are used later in \texttt{main.py} for validation and figure generation.
+
+\medskip
+\texttt{utils.py} is the mathematical engine of the project. It takes the explicit finite MDP
+and produces the paper's exact objects \(P\), \(\widetilde{P}\), \(\rho\), \(u\), \(v\),
+\(\pi^*\), and the driven dynamics.
+
+\subsection*{File 3: \texttt{main.py} is the experiment script that reproduces the paper}
+
+\texttt{main.py} does not define the theory and does not define the environment. Its role is
+to assemble those ingredients into concrete numerical experiments, each corresponding to one
+or more figures in the paper.
+
+So this file should be read as an executable appendix: each \texttt{make\_figure\_*} function
+is a computational check of one claim in the paper.
+
+Most figure functions begin with the same workflow:
+\begin{enumerate}
+    \item instantiate a \texttt{ModifiedFrozenLake} environment;
+    \item optionally wrap it in \texttt{TimeLimit};
+    \item call \texttt{get\_dynamics\_and\_rewards};
+    \item choose a prior policy, usually uniform;
+    \item either solve the Perron problem analytically or learn its eigenvectors from samples;
+    \item convert the output into a plot.
+\end{enumerate}
+This repeated structure is useful because it makes clear that all figures are probing the same
+underlying mathematical object from different angles.
+
+\medskip
+\texttt{make\_figure\_2} is the most direct numerical implementation of the paper's claim that
+the interior of a long but finite trajectory is well approximated by the bulk distribution
+built from the Perron eigenvectors. The code first fixes a concrete environment:
+\begin{equation}
+    \texttt{map\_name} = \texttt{'9x9zigzag'},
+    \qquad
+    N = 250,
+    \qquad
+    \beta = 20.
+\end{equation}
+The geometry of \texttt{9x9zigzag} is
+\begin{verbatim}
+FFFFFFFFF
+FSFFFFFFF
+WWWWWWFFF
+FFFFFFFFF
+FFFFFFFFF
+FFFFFFFFF
+FFFWWWWWW
+FFFFFFFGF
+FFFFFFFFF
+\end{verbatim}
+So this maze contains a start state \(S\), a goal state \(G\), many free cells \(F\), and two
+horizontal wall barriers \(W\) that force a zigzag route. It contains no holes \(H\), no candy
+\(C\), and no nails \(N\).
+
+Then it builds \texttt{dynamics}, \texttt{rewards}, the uniform prior policy, and solves the
+model-based Perron problem. From the solution it extracts the bulk state-action distribution
+\begin{equation}
+    p_{\mathrm{bulk}}(z) = u(z)v(z).
+\end{equation}
+
+For this specific map, the reward function is much simpler than the fully general rule defined
+in \texttt{ModifiedFrozenLake}. In the code, Figure 2 uses
+\begin{equation}
+    \texttt{min\_reward}=-2,
+    \qquad
+    \texttt{step\_penalization}=1,
+    \qquad
+    \texttt{max\_reward}=0,
+\end{equation}
+while the default action set is the four cardinal moves and the default setting
+\texttt{never\_done=True} is kept. Since the map contains only \(S\), \(F\), \(G\), and \(W\),
+the one-step reward actually realized in this maze is:
+\begin{itemize}
+    \item \(r(z)=-1\) at every non-goal state-action pair, because each ordinary move carries a
+    unit step cost;
+    \item \(r(z)=0\) when the current state-action pair lies at the goal state, because the
+    code sets the step penalty to zero once the process is already at \(G\);
+    \item wall collisions do not introduce a special extra penalty: they simply keep the agent
+    in place, but the step still costs \(-1\) because the current state is not the goal.
+\end{itemize}
+The parameter \texttt{min\_reward}=-2 does not play an active role in this particular maze,
+because there are no hole states. Likewise, there is no candy or nail contribution. So for
+Figure 2 the reward structure is essentially a shortest-path cost: every non-goal step costs
+\(-1\), and being at the goal costs \(0\).
+
+This matters because the tilted weight
+\begin{equation}
+    e^{\beta r(z)}
+\end{equation}
+is therefore just
+\begin{equation}
+    e^{-\beta}
+\end{equation}
+for ordinary non-goal moves and \(1\) at the goal. Since \(\beta=20\), non-goal steps are
+penalized by an extremely small factor \(e^{-20}\). The conditioned ensemble thus strongly
+favors trajectories that reach the goal region quickly and then exploit the zero-cost
+recycling around the goal. That is the concrete reward-level reason why the bulk distribution
+in Figure 2 concentrates on the effective optimal corridor of the maze.
+
+The function then rebuilds the tilted matrix \(M=P\mathrm{diag}(e^{\beta r})\) explicitly and
+starts a second calculation that is conceptually different from the eigenproblem. Instead of
+computing only the asymptotic mode, it propagates finite-time forward and backward messages:
+\begin{equation}
+    v_{t+1} \propto M v_t,
+    \qquad
+    u_{t} \propto M^\top u_{t+1}.
+\end{equation}
+The code stores these iterates in \texttt{u\_in\_time} and \texttt{v\_in\_time}. At each time
+slice \(t\), it multiplies them entrywise and renormalizes:
+\begin{equation}
+    p_t(z) \propto u_t(z)\,v_t(z).
+\end{equation}
+As explained earlier, this is exactly the finite-horizon conditioned marginal
+\begin{equation}
+    p_t(z)=p(z_t=z\mid O_{1:T}),
+\end{equation}
+not a heuristic proxy. In other words, the code is explicitly reconstructing the exact
+distribution of the state-action pair at time \(t\), conditioned on the whole trajectory being
+optimal. This \(p_t\) is the true time-dependent interior distribution for a finite horizon
+\(N\), whereas \(p_{\mathrm{bulk}}\) is the large-\(N\) approximation.
+
+Therefore the comparison in Figure 2 is exactly the same as the statement in the paper: the
+product of the asymptotic Perron eigenvectors,
+\begin{equation}
+    u(z)v(z)=p_{\mathrm{bulk}}(z),
+\end{equation}
+is being compared with the exact finite-horizon conditioned marginal
+\begin{equation}
+    p_t(z)=p(z_t=z\mid O_{1:T}).
+\end{equation}
+The paper phrases the agreement by saying that the ratio
+\begin{equation}
+    \frac{u(z_t)v(z_t)}{p(z_t\mid O_{1:T})}
+\end{equation}
+is close to \(1\) in the bulk region. The code expresses the same idea through the KL
+divergence between these two distributions as a function of \(t\).
+
+The final numerical comparison is a KL divergence at each time \(t\). The code uses the bulk
+distribution as \(p\) and the exact finite-time distribution as \(q_t\), computing
+\begin{equation}
+    D_{\mathrm{KL}}(t)
+    =
+    \sum_z p_{\mathrm{bulk}}(z)\log \frac{p_{\mathrm{bulk}}(z)}{p_t(z)}.
+\end{equation}
+So the plotted curve is not reward, policy, or value. It is a direct measure of how close the
+bulk approximation is to the exact conditioned finite-time distribution as one moves from the
+left boundary of the trajectory to the right boundary. The logic is that the center of the
+trajectory should be well described by the Perron bulk, while the two ends should show
+boundary effects.
+
+\medskip
+\texttt{make\_figure\_3} is the function where the paper's thermodynamic interpretation is made
+fully explicit in a concrete finite system. It again starts from a fixed model, namely the same
+\texttt{9x9zigzag} map,
+and scans over many values of \(\beta\). For each \(\beta\), it solves the Perron problem and
+stores the solution. Then it builds the state-action bulk distribution
+\begin{equation}
+    p_\beta(z)=u_\beta(z)v_\beta(z)
+\end{equation}
+and computes the quantities
+\begin{equation}
+    F,\qquad E,\qquad S,\qquad \theta=-\log\rho.
+\end{equation}
+More concretely, the code defines
+\begin{equation}
+    E(\beta) = -\sum_z p_\beta(z)\,r(z),
+\end{equation}
+which is the mean cost per step, and
+\begin{equation}
+    F(\beta) = -\frac{\log \rho(\beta)}{\beta},
+\end{equation}
+which plays the role of a free energy per step. It also computes an entropy-like quantity by
+combining the optimal policy and the prior policy:
+\begin{equation}
+    S_1 = \sum_z p_\beta(z)\bigl[-\log \pi^*(a|s)\bigr],
+    \qquad
+    S_2 = \sum_z p_\beta(z)\log \pi(a|s),
+\end{equation}
+so that \(-(S_1+S_2)\) is the relative-entropy contribution plotted in the second panel.
+
+The function makes two different kinds of figures. The top figure is a family of state
+distributions for several representative values of \(\beta\). To obtain them, the code sums
+\(p_\beta(z)\) over actions and uses \texttt{plot\_dist} to display the resulting state
+occupancies on the maze. This gives an immediate visual answer to the question: as \(\beta\)
+changes, where does the controlled ensemble spend its time?
+
+The bottom figure is a thermodynamic summary. The code puts \(F(\beta)\), \(E(\beta)\), and the
+entropy term on one set of axes, and then adds Monte Carlo points labelled ``Simulated
+Energy''. The label can be slightly confusing, because what is actually simulated is the mean
+reward per step and then converted into a mean cost per step so that it can be compared with
+\(E(\beta)\).
+
+More precisely, the helper \texttt{test\_policy(env,policy)} returns the total realized reward
+of one rollout,
+\begin{equation}
+    R_{\mathrm{rollout}}=\sum_{t=1}^{N} r_t.
+\end{equation}
+In \texttt{make\_figure\_3}, the worker function records
+\begin{equation}
+    -\frac{R_{\mathrm{rollout}}}{N},
+\end{equation}
+where \(N\) is the trajectory length used in the \texttt{TimeLimit} wrapper. So each Monte
+Carlo sample is a \emph{sample mean cost per step}. Averaging many such samples yields
+\begin{equation}
+    E_{\mathrm{sim}}(\beta)
+    \approx
+    -\frac{1}{N}\,\mathbb{E}_{\pi_\beta^*}[R_{\mathrm{rollout}}],
+\end{equation}
+which is exactly the quantity plotted as ``Simulated Energy''.
+
+So these points are not produced by a separate RL algorithm. The code first computes the
+analytical policy \(\pi^*_\beta\) from the Perron problem, then rolls out that policy in the
+actual environment, measures its realized mean reward per step, flips the sign to convert
+reward into cost, and compares the result with the analytical prediction
+\begin{equation}
+    E(\beta)=-\sum_z p_\beta(z)r(z).
+\end{equation}
+Figure 3 therefore simultaneously shows the thermodynamic quantities extracted from the Perron
+problem and verifies, by direct simulation, that the analytically reconstructed policy has the
+predicted average cost.
+
+It is also important not to over-interpret the word ``thermodynamic'' here. All of these curves
+are computed on one fixed finite \(9\times 9\) maze. So this is not a thermodynamic limit in
+the spatial sense \(L\to\infty\). The relevant asymptotic idea in this figure is the
+long-trajectory or large-deviation limit in time, not an infinite-volume limit in lattice size.
+
+\medskip
+\texttt{solve\_dp} and \texttt{make\_figure\_5} form the dynamic-programming comparison. Here
+the environment is changed to \texttt{10x10empty}, and the goal is no longer to visualize a
+policy or a state distribution. Instead, the code wants to compare two different ways of
+computing soft \(Q\)-values.
+
+The helper \texttt{solve\_dp(beta,max\_steps,gamma)} performs a finite-horizon soft
+dynamic-programming recursion. Starting from zero \(Q\)-values and zero soft values, it
+iterates
+\begin{equation}
+    Q(s,a) = r(s,a) + \gamma \sum_{s'} p(s'|s,a) V(s')
+\end{equation}
+followed by the soft backup
+\begin{equation}
+    V(s)=\frac{1}{\beta}\log \sum_a \pi(a|s)e^{\beta Q(s,a)},
+\end{equation}
+implemented with the usual numerical stabilization via a local shift \(\delta\).
+
+The actual figure is produced by \texttt{make\_figure\_5}. This function computes the entire
+finite-horizon sequence \(Q_t\) and \(V_t\) for all horizons up to \(N\). In parallel, it also
+solves the large-deviation Perron problem and constructs the approximation
+\begin{equation}
+    Q^{\mathrm{LD}}_t(z)
+    =
+    \frac{\log \rho \, t + \log u(z)}{\beta},
+\end{equation}
+then divides by \(t\) to compare per-step quantities.
+
+The resulting figure has several panels. One panel plots the root-mean-square error between the
+finite-horizon soft \(Q\)-values and the large-deviation approximation as a function of horizon
+length. Two other panels make direct scatter plots of
+\begin{equation}
+    Q^{\mathrm{DP}}_t(z)/t
+    \quad \text{versus} \quad
+    Q^{\mathrm{LD}}_t(z)/t
+\end{equation}
+for a moderately short horizon and for a long horizon. The dashed diagonal is the line of
+perfect agreement. So Figure 5 is the place where the code demonstrates that the eigenvalue
+formulation is not an unrelated alternative to soft value functions, but their long-time
+asymptotic limit.
+
+Here the role of \(N\) is completely explicit. First, the environment is wrapped as
+\texttt{TimeLimit(env, N)}, so \(N\) defines the finite horizon of the control problem being
+solved. Second, the code stores the whole family
+\(\{Q_t^{\mathrm{DP}}\}_{t=1}^N\) and \(\{V_t^{\mathrm{DP}}\}_{t=1}^N\), so the top-right
+panel is literally a plot of the error versus trajectory length \(t\le N\). Third, the two
+bottom scatter plots are obtained by choosing two specific horizons, \(t=20\) and \(t=290\),
+and comparing all state-action values at those two lengths. So in Figure 5, \(N\) is part of
+the theoretical object itself: the figure compares finite-horizon dynamic programming with the
+large-\(N\) Perron approximation.
+
+\medskip
+\texttt{make\_figure\_6} is the simplest figure in conceptual terms, but it is visually very
+useful. The function loops over three different maps:
+\begin{equation}
+    \texttt{'7x7holes'},\qquad
+    \texttt{'8x8zigzag'},\qquad
+    \texttt{'9x9ridgex4'}.
+\end{equation}
+For each map it solves the model-based Perron problem at fixed \(\beta\) and extracts the
+optimal policy \(\pi^*(a|s)\). It then calls \texttt{plot\_dist(env.desc, optimal\_policy)},
+which interprets the \((n_S,n_A)\) table as arrows on the maze. No additional statistics are
+computed here. The whole point of the figure is to show, directly and qualitatively, how the
+left eigenvector reweights actions in different regions of the maze. In other words, Figure 6
+is where the abstract Doob-transform formula turns into an actual navigation strategy visible
+by eye.
+
+\medskip
+\texttt{make\_figure\_7} is the first genuinely sample-based learning routine. It uses the map
+\texttt{'7x7holes'} and an episode length \(N=1000\). The function still calls
+\texttt{get\_dynamics\_and\_rewards} once, but this is only to obtain dimensions and maintain
+consistency of notation; the actual learning loop does not build or solve \(\widetilde P\).
+Instead it begins by collecting a replay buffer of SARSA-style tuples
+\begin{enumerate}
+    \item sample trajectories under the uniform prior policy;
+    \item store every encountered tuple \((s,a,r,s',a')\) in \texttt{replay\_memory};
+    \item for each \(\beta\) in \([1,5,10,50,100]\), repeatedly sweep through that buffer;
+    \item update a table \(u(s,a)\) and an eigenvalue estimate \(l\);
+    \item convert the current \(u\) into a policy and test it by rollouts.
+\end{enumerate}
+
+The core update is
+\begin{equation}
+    u(s,a)
+    \leftarrow
+    (1-\alpha)u(s,a) + \alpha \frac{e^{\beta r}}{l}u(s',a').
+\end{equation}
+At the same time, the code updates
+\begin{equation}
+    l
+    \leftarrow
+    (1-\alpha_\theta)l + \alpha_\theta e^{\beta r}\frac{u(s',a')}{u(s,a)},
+\end{equation}
+with \(\alpha_\theta = \alpha /(n_S n_A)\). These are not arbitrary TD rules. They are the
+sampled analogues of the left-eigenvector equation
+\begin{equation}
+    \rho\,u(s,a)
+    =
+    e^{\beta r(s,a)}
+    \mathbb{E}[u(s',a') \mid s,a].
+\end{equation}
+Every fixed number of training steps, the code turns the learned \(u\)-table into a policy by
+\begin{equation}
+    \pi_t(a|s)\propto u_t(s,a)\pi(a|s),
+\end{equation}
+runs \texttt{test\_policy} ten times, and records the empirical mean reward per step. The
+final plot is therefore a family of learning curves: horizontal axis is training step,
+vertical axis is mean per-step reward, and each curve corresponds to one value of \(\beta\).
+So Figure 7 is not showing convergence of the exact solver; it is showing whether a
+sample-based \(u\)-learning rule can progressively improve control performance.
+
+In Figure 7, \(N\) enters differently from Figure 5. It is no longer the horizontal axis of a
+finite-horizon comparison. Instead, it defines the episode length used to collect data. Because
+the environment is wrapped in \texttt{TimeLimit(env, N)}, each episode contributes at most
+\(N\) SARSA tuples \((s,a,r,s',a')\) to the replay buffer. Hence the total amount of sampled
+experience grows roughly like \(N\times n_{\mathrm{episodes}}\). The same \(N\) also sets the
+evaluation and rescaling periods through
+\texttt{evaluation\_period = N * 100} and \texttt{rescale\_period = N * 100}, and the measured
+return is divided by \(N\) to produce a per-step reward. So in Figure 7, \(N\) is part of the
+sampling and evaluation protocol rather than part of the Perron fixed-point equation itself.
+
+\medskip
+\texttt{make\_figure\_8} extends the previous idea by trying to learn both the left and the
+right Perron eigenvectors from trajectories. It again uses \texttt{'7x7holes'} and long
+episodes, but now launches several independent replicas in parallel on CPU cores. Each replica
+maintains
+\begin{equation}
+    u(s,a),\qquad v(s,a),\qquad l,
+\end{equation}
+as well as an empirical state-frequency counter \texttt{state\_freq}.
+
+Within each sampled trajectory, the code performs three coupled updates. The left-eigenvector
+update is essentially the same as in Figure 7. The eigenvalue update is also similar. The new
+element is the right-eigenvector update:
+\begin{equation}
+    v(s',a')
+    \leftarrow
+    v(s',a') + \alpha\left(
+        \frac{e^{\beta r}}{l}v(s,a)\times \text{occupancy correction}
+        - v(s',a')
+    \right),
+\end{equation}
+where the occupancy correction is built from the prior-policy factors and empirical state
+frequencies. The intention is to mimic the forward weighting associated with the right Perron
+mode.
+
+This routine does not primarily evaluate the policy itself. Instead it tracks the learned
+estimate of
+\begin{equation}
+    \theta = -\frac{\log l}{\beta},
+\end{equation}
+stores it periodically, and compares it to the ground-truth model-based value obtained from
+\texttt{solve\_unconstrained\_v1}. The final figure has two panels. One panel shows the
+learning-rate schedules \(\alpha\) and \(\alpha_\theta\) on a logarithmic scale. The other
+panel shows the learned \(\theta\) as a function of training step, averaged over replicas with
+a shaded standard-deviation band, together with a dashed horizontal line at the exact target
+value. So Figure 8 is a convergence test for sample-based estimation of the large-deviation
+rate itself.
+
+Figure 8 uses \(N\) in the same operational sense as Figure 7, but now for the joint learning
+of \(u\), \(v\), and \(l\). The code fixes \(N=1000\), wraps the environment with
+\texttt{TimeLimit(env, N)}, and then streams one-step transitions from episodes of that maximal
+length. Thus \(N\) controls how many updates can be extracted from each episode. In addition,
+the bookkeeping intervals are defined from \(N\): the save period is
+\texttt{save\_period = N * n\_episodes // 1000}, and the rescaling period is a fixed multiple
+of that save period. Therefore even though the horizontal axis of the final plot is
+\texttt{training step}, the density of recorded points and the frequency of normalization are
+both set indirectly by \(N\).
+
+At the bottom of the file, the \texttt{if \_\_name\_\_ == '\_\_main\_\_'} block simply calls
+the figure functions in order. So running \texttt{python main.py} is not ``training a
+general agent''. It is executing a sequence of carefully chosen numerical demonstrations of
+the paper's claims.
+
+\medskip
+\texttt{main.py} is the experimental narrative of the project. It shows how the abstract
+objects built in \texttt{utils.py} can be validated by exact propagation, dynamic programming,
+Monte Carlo simulation, and sample-based stochastic approximation.
+
+\subsection*{A key distinction: analytical solution versus simulation versus learning}
+
+At this point it is important to separate three very different things that the code does,
+because the paper uses all three.
+
+First, there is analytical or model-based solution.
+Whenever the code calls
+\texttt{get\_dynamics\_and\_rewards},
+\texttt{get\_mdp\_transition\_matrix},
+or
+\texttt{solve\_unconstrained},
+it is assuming that the full environment model is known exactly.
+
+That means the code has direct access to:
+\begin{equation}
+    p(s'|s,a), \qquad r(s,a), \qquad P, \qquad \widetilde{P}.
+\end{equation}
+From there it solves the Perron problem directly by sparse linear algebra. This is not
+reinforcement learning in the usual sample-based sense. It is exact model-based computation on
+the finite MDP.
+
+So, for example:
+\begin{itemize}
+    \item Figure 2 is mostly exact matrix propagation;
+    \item Figure 3's thermodynamic curves are obtained by exact Perron solves;
+    \item Figure 5's comparison uses exact dynamic programming and exact Perron solves;
+    \item Figure 6 is also fully model-based.
+\end{itemize}
+
+Second, there is simulation in the narrow sense: rollouts under a fixed policy.
+The function \texttt{test\_policy} in \texttt{utils.py} does something much simpler. It does
+not learn a policy and does not solve an eigenproblem. It just takes an already specified
+policy \(\pi(a|s)\), runs trajectories in the actual environment by repeated calls to
+\texttt{env.step(action)}, and averages the realized rewards.
+
+Mathematically, this estimates quantities like
+\begin{equation}
+    \mathbb{E}_{\tau \sim p_\pi(\tau)}[R_\tau]
+\end{equation}
+by Monte Carlo sampling.
+
+This part is ``simulation'' in the standard statistical sense: one samples trajectories from a
+known process to estimate observables empirically.
+
+Therefore, when Figure 3 compares the analytical curve with ``simulation'', the simulation is
+not a separate RL algorithm. It is just Monte Carlo evaluation of the policy that was already
+obtained analytically.
+
+Third, there is learning from samples without using the model.
+Figures 7 and 8 are the genuinely learning-based part of the repository. There the code does
+not build \(\widetilde{P}\) explicitly and does not solve a matrix eigenproblem directly.
+Instead, it only sees sampled transitions
+\begin{equation}
+    (s,a,r,s',a')
+\end{equation}
+generated by interaction with the environment, and updates tables such as \(u(s,a)\),
+\(v(s,a)\), and \(l\) from those samples.
+
+This is much closer to reinforcement learning, because the model is not used explicitly during
+the update. However, it is still not ``traditional RL'' in the most common sense:
+\begin{itemize}
+    \item it is not Q-learning;
+    \item it is not policy gradient;
+    \item it is not actor-critic;
+    \item it is not deep RL.
+\end{itemize}
+
+Instead, it is a custom stochastic-approximation algorithm designed to learn the Perron
+eigenvectors of the tilted operator from samples.
+
+To make this more concrete, it helps to compare the paper's learning rule with the two most
+familiar temporal-difference algorithms.
+
+In Q-learning, the primary object is the action-value function \(Q(s,a)\), and the update tries
+to move the current estimate toward
+\begin{equation}
+    r + \gamma \max_{a'} Q(s',a').
+\end{equation}
+So Q-learning is a Bellman-backup algorithm, and because the target uses the greedy action at
+the next state rather than the action actually taken, it is off-policy.
+
+In SARSA, the primary object is again \(Q(s,a)\), but the update target is
+\begin{equation}
+    r + \gamma Q(s',a'),
+\end{equation}
+where \(a'\) is the next action actually sampled by the behavior policy. This is why SARSA is
+on-policy. Its name comes from the data tuple
+\begin{equation}
+    (s,a,r,s',a').
+\end{equation}
+
+The paper's \(u\)-\(\theta\) learning shares the \emph{sample format} of SARSA: it also stores
+and reuses tuples of the form
+\begin{equation}
+    (s,a,r,s',a').
+\end{equation}
+So at the level of replay memory and one-step sampled transitions, it looks closer to SARSA than
+to Q-learning.
+
+\subsection{Derivation of Eq.~(25) and the starting point of \(u\)-\(\theta\) learning}
+
+However, the quantity being learned is completely different. The update is not trying to satisfy
+a Bellman equation for \(Q\). Instead, it is trying to satisfy the tilted-operator eigenvector
+relation
+\begin{equation}
+    \rho\,u(s,a)
+    =
+    e^{\beta r(s,a)}
+    \mathbb E\!\left[u(s',a')\mid s,a\right],
+\end{equation}
+with a simultaneous stochastic update for the eigenvalue parameter \(l\) or
+\(\theta=-\log l/\beta\). Thus the direct learning targets are
+\begin{equation}
+    u(s,a), \qquad v(s,a), \qquad \rho \ \text{or}\ \theta,
+\end{equation}
+not \(Q(s,a)\).
+
+This finite-sample target can be derived directly from the driven kernel formula. Earlier we
+obtained
+\begin{equation}
+    [P_d]_{ji}
+    =
+    \frac{\widetilde P_{ji}u_j}{e^{-\beta\theta}u_i},
+    \qquad
+    \widetilde P_{ji}=p(j\mid i)e^{\beta r(i)}.
+\end{equation}
+Since \(P_d\) is a genuine transition matrix, its columns sum to one:
+\begin{equation}
+    \sum_j [P_d]_{ji}=1.
+\end{equation}
+Substituting the previous expression gives
+\begin{equation}
+    1
+    =
+    \sum_j
+    \frac{p(j\mid i)e^{\beta r(i)}u_j}{e^{-\beta\theta}u_i}
+    =
+    \frac{e^{\beta r(i)}}{e^{-\beta\theta}u_i}
+    \sum_j p(j\mid i)u_j,
+\end{equation}
+or equivalently
+\begin{equation}
+    e^{-\beta\theta}u_i
+    =
+    e^{\beta r(i)}\sum_j p(j\mid i)u_j.
+\end{equation}
+Writing \(i=(s,a)\) and \(j=(s',a')\), this becomes
+\begin{equation}
+    e^{-\beta\theta}u(s,a)
+    =
+    e^{\beta r(s,a)}
+    \mathbb E\!\left[u(s',a')\mid s,a\right].
+\end{equation}
+This is exactly the fixed-point relation used by the \(u\)-\(\theta\) learning rule: one now
+replaces the conditional expectation by a single sampled transition \((s,a,r,s',a')\).
+
+For clarity, one full \(u\)-\(\theta\) update can be written as the following workflow:
+\begin{enumerate}
+    \item sample or replay one tuple
+    \begin{equation}
+        (s,a,r,s',a');
+    \end{equation}
+    \item compute the exponential reward weight
+    \begin{equation}
+        w:=e^{\beta r};
+    \end{equation}
+    \item read the current table values
+    \begin{equation}
+        u:=u(s,a),
+        \qquad
+        u':=u(s',a');
+    \end{equation}
+    \item form the single-sample fixed-point target
+    \begin{equation}
+        u_{\mathrm{target}}
+        :=
+        \frac{w}{l}\,u';
+    \end{equation}
+    \item update the \(u\)-table entry by exponential averaging
+    \begin{equation}
+        u(s,a)
+        \leftarrow
+        (1-\alpha)u(s,a)+\alpha \frac{w}{l}u(s',a');
+    \end{equation}
+    \item form the single-sample eigenvalue target
+    \begin{equation}
+        l_{\mathrm{target}}
+        :=
+        w\,\frac{u'}{u};
+    \end{equation}
+    \item update the eigenvalue estimate with a slower rate
+    \begin{equation}
+        l
+        \leftarrow
+        (1-\alpha_\theta)l+\alpha_\theta w\frac{u'}{u};
+    \end{equation}
+    \item reconstruct the current policy when needed through
+    \begin{equation}
+        \pi(a\mid s)\propto \pi_0(a\mid s)u(s,a).
+    \end{equation}
+\end{enumerate}
+This is why the routine is sample-based but not Bellman-based: it is performing a stochastic
+approximation of a Perron fixed-point relation rather than a TD backup for \(Q\).
+
+This leads to a different route to the policy. In many entropy-regularized Bellman formulations,
+one first learns \(Q\) and then obtains a policy from that value function. In this paper, one
+learns the Perron objects first and then reconstructs the policy through
+\begin{equation}
+    \pi^*(a\mid s)\propto \pi(a\mid s)u(s,a).
+\end{equation}
+So the pipeline is not
+\begin{equation}
+    (s,a,r,s',a') \to Q \to \pi,
+\end{equation}
+but rather
+\begin{equation}
+    (s,a,r,s',a') \to (u,v,\rho) \to \pi.
+\end{equation}
+
+The cleanest summary is:
+\begin{itemize}
+    \item Q-learning and SARSA live in the Bellman-value-function world;
+    \item the paper's \(u\)-\(\theta\) learning lives in the tilted-operator Perron-eigenvector
+    world;
+    \item the connection to SARSA is in the sampled one-step tuple structure, not in the final
+    mathematical target of the update.
+\end{itemize}
+
+Traditional reinforcement learning usually tries to learn one of the following:
+\begin{equation}
+    V^\pi(s), \qquad Q^\pi(s,a), \qquad \pi(a|s),
+\end{equation}
+or a parameterized approximation of them.
+
+By contrast, this paper's sample-based routines try to learn
+\begin{equation}
+    u(s,a), \qquad v(s,a), \qquad \rho,
+\end{equation}
+where \(u\) and \(v\) are the left and right Perron eigenvectors of the tilted operator
+\(\widetilde{P}\).
+
+So the learning target is different. The philosophy is:
+\begin{equation}
+    \text{do not learn } Q \text{ first and then derive the control;}
+    \qquad
+    \text{learn the tilted-operator eigenstructure directly.}
+\end{equation}
+
+The whole project therefore has a very specific logic:
+\begin{enumerate}
+    \item first solve the finite problem analytically when the model is known;
+    \item then simulate trajectories under the analytically derived policy to check that the
+    observable averages are correct;
+    \item finally, design sample-based updates that recover the same Perron objects without
+    explicit access to the model.
+\end{enumerate}
+
+This is why the repository can look confusing at first: some figures are exact numerical
+linear algebra, some are plain Monte Carlo evaluation, and only some are genuine learning
+algorithms. The paper deliberately mixes these because it wants to show both:
+\begin{itemize}
+    \item the analytical theory is correct;
+    \item the same objects can in principle be learned from trajectories.
+\end{itemize}
+
+\subsection*{Is this just an interpretation of RL, or a new RL scheme?}
+
+The correct answer is: \emph{both, but not in the same sense}.
+
+At the first level, it is a new theoretical formulation of entropy-regularized control.
+At the theoretical level, the paper is not merely re-explaining standard RL notation. It
+proposes a different mathematical formulation of the control problem:
+\begin{equation}
+    \text{control}
+    \;\longleftrightarrow\;
+    \text{inference on trajectories}
+    \;\longleftrightarrow\;
+    \text{Perron problem for a tilted operator}.
+\end{equation}
+So the paper is saying that the optimization target can be understood through biased path
+ensembles, large deviations, and dominant eigenvectors rather than only through Bellman
+equations.
+
+At the second level, the model-based part is mainly for understanding and exact computation.
+When the code explicitly builds \(P\), \(\widetilde{P}\), and solves for \((\rho,u,v)\), this
+is not meant to imitate the temporal process of a standard RL agent learning online. It is a
+model-based calculation whose main role is:
+\begin{itemize}
+    \item to make the theory explicit on a finite example;
+    \item to check the analytical claims numerically;
+    \item to provide a ground truth for comparison.
+\end{itemize}
+So this part is closer to ``understanding the structure of the control problem exactly'' than
+to ``simulating how a conventional RL algorithm learns''.
+
+At the third level, the sample-based part is indeed proposing a different learning route.
+Once the paper writes the control problem as an eigenvector problem, it becomes natural to ask:
+\emph{can we learn \(u\), \(v\), and \(\rho\) directly from trajectories?}
+
+That is exactly what the Figure 7 and Figure 8 routines try to do. They do not learn
+\(Q\)-values first and then derive a policy. Instead they try to learn the tilted-operator
+eigenstructure itself:
+\begin{equation}
+    (u,v,\rho)
+    \quad \text{instead of} \quad
+    (Q,V,\pi)
+    \text{ as the primary object.}
+\end{equation}
+In that sense, yes, the paper is pointing toward a new reinforcement-learning scheme, or at
+least a new family of RL algorithms.
+
+It is not claiming that all of reinforcement learning should be replaced by exact matrix
+diagonalization. That would only work when the full finite model is explicitly available.
+
+Instead, the intended logic is:
+\begin{enumerate}
+    \item derive a new control formulation analytically;
+    \item verify it in model-based finite environments;
+    \item then design sample-based algorithms inspired by that formulation.
+\end{enumerate}
+
+The code is not primarily trying to reproduce the usual RL learning process in order to
+explain it. Rather, it develops a different formulation of entropy-regularized RL, solves that
+formulation exactly when possible, and then uses those exact solutions to motivate and test a
+new eigenvector-based learning approach.
+
+\subsection*{File 4: \texttt{visualization.py} converts mathematical arrays back into spatial pictures}
+
+\paragraph{What this file is for.}
+This file contains almost no theory. Its role is representational: it takes arrays living in
+state space or state-action space and displays them on the original lattice.
+
+That separation is good design. It ensures that plotting choices do not get mixed into the
+numerical or conceptual core.
+
+\paragraph{\texttt{plot\_dist}: one entry point, several display modes.}
+The main function \texttt{plot\_dist(...)} is flexible because it accepts different kinds of
+objects:
+\begin{itemize}
+    \item a state distribution over the lattice;
+    \item a policy table of shape \((n_S,n_A)\);
+    \item a collection of such objects to arrange in multiple subplots;
+    \item in some cases a force-field-like object.
+\end{itemize}
+So the same plotting function can visualize several mathematically different outputs of the
+solver.
+
+\paragraph{How a scalar state distribution is displayed.}
+If the input can be interpreted as one number per state, the function reshapes it onto the
+grid and rescales it between \(0\) and \(1\). Blue intensity is then used to indicate larger
+occupancy. This is why the state-distribution plots look like heat maps over the maze.
+
+\paragraph{How a policy is displayed.}
+If the input has shape \((n_S,n_A)\), the file interprets it as a policy. Each action is
+assigned a direction, and the code draws an arrow from each cell:
+\begin{equation}
+    \text{arrow length} \propto \pi(a|s).
+\end{equation}
+Thus the visualization is not a separate optimization object. It is a geometric rendering of
+the probability table already computed elsewhere.
+
+\paragraph{How the map semantics are preserved in the figure.}
+The helper \texttt{add\_layout} colors walls black. The plotting routines also overlay start,
+goal, hole, candy, and nail symbols in different markers and colors. This is more than
+cosmetic: without those overlays, one could not visually compare the learned distribution or
+policy against the reward and obstacle structure that produced it.
+
+\paragraph{Why this file matters despite being simple.}
+The analytical objects of the paper live in high-dimensional indexed arrays. A human, however,
+understands the experiment as motion on a maze. \texttt{visualization.py} is the translation
+layer between those two viewpoints.
+
+\subsection*{How the four files fit together conceptually}
+
+It is useful to say in one sentence what each file contributes to the derivation:
+\begin{itemize}
+    \item \texttt{frozen\_lake\_env.py} defines the uncontrolled world;
+    \item \texttt{utils.py} rewrites that world as the tilted operator problem of the paper;
+    \item \texttt{main.py} asks concrete numerical questions about that operator problem;
+    \item \texttt{visualization.py} displays the answers in the original spatial language of the
+    maze.
+\end{itemize}
+
+Equivalently, the project can be summarized by the following chain:
+\begin{equation}
+    \texttt{ModifiedFrozenLake}
+    \;\Rightarrow\;
+    \texttt{env.P}
+    \;\Rightarrow\;
+    (\texttt{dynamics},\texttt{rewards})
+    \;\Rightarrow\;
+    P,\widetilde{P}
+    \;\Rightarrow\;
+    (\rho,u,v)
+    \;\Rightarrow\;
+    \pi^*,\; \text{driven dynamics},\; \text{bulk distribution}
+    \;\Rightarrow\;
+    \text{plots and figure comparisons}.
+\end{equation}
+
+This is why the code feels unusually close to the mathematics. It is not a broad RL software
+framework. It is a narrow computational implementation of one specific analytical story:
+entropy-regularized control is rewritten as a Perron-eigenvalue problem for a tilted
+state-action transition operator.
+
+\section{Reading Guide: Why NESM and Large Deviations Appear Here}
+
+\subsection*{What NESM means in this paper}
+
+NESM stands for \emph{nonequilibrium statistical mechanics}. The relevant idea here is not
+the equilibrium question ``what is the probability of a state?'', but the dynamical question
+``what is the probability of a long trajectory?''.
+
+This is exactly why the paper fits naturally into the NESM language. In reinforcement
+learning, one studies trajectories
+\[
+\tau=(z_1,\dots,z_T), \qquad z_t=(s_t,a_t),
+\]
+and wants to favor those trajectories with large accumulated reward
+\[
+R_\tau=\sum_{t=1}^T r(z_t).
+\]
+The control-as-inference reformulation replaces direct reward maximization by an
+exponentially tilted trajectory ensemble,
+\begin{equation}
+    p(\tau\mid O_{1:T})
+    \propto
+    p(\tau)e^{\beta R_\tau}.
+\end{equation}
+From the point of view of NESM, this is a standard biased ensemble of trajectories. The
+trajectory is reweighted by an exponential of a time-additive observable. That is precisely
+the setting where large-deviation theory applies.
+
+\subsection*{Why large deviations appear}
+
+Large-deviation theory studies the probabilities of atypical values of long-time averaged
+observables. If
+\[
+    A_T=\frac{1}{T}\sum_{t=1}^T a(z_t)
+\]
+is an empirical time average, then large-deviation theory asks how
+\[
+    P(A_T\approx a)
+\]
+decays as \(T\to\infty\). The generic form is
+\begin{equation}
+    P(A_T\approx a)\asymp e^{-T I(a)},
+\end{equation}
+where \(I(a)\) is the rate function.
+
+In this paper, the additive observable is the total reward or total cost. Instead of fixing
+an exact rare value of \(R_\tau/T\), the paper introduces an exponential bias
+\[
+e^{\beta R_\tau}.
+\]
+This is the canonical-ensemble version of a large-deviation problem. Therefore:
+\begin{itemize}
+    \item the tilted matrix \(\widetilde{P}\) is the tilted operator of large-deviation theory;
+    \item its dominant eigenvalue plays the role of a scaled cumulant generating function;
+    \item the Doob \(h\)-transform gives the driven process that makes the rare trajectories
+    typical.
+\end{itemize}
+
+So the connection is structural, not metaphorical.
+
+\subsection*{Where large-deviation theory enters the RL derivation}
+
+It is useful to say this more concretely, because otherwise ``large deviation theory'' can
+sound like a general slogan rather than a precise ingredient of the derivation. In this paper,
+large-deviation theory enters at four specific points.
+
+First, the object of interest is no longer only a policy or a value function, but a
+\emph{trajectory ensemble}. After introducing the optimality variables, the paper rewrites the
+posterior trajectory weight as
+\begin{equation}
+    p(\tau\mid O_{1:T})
+    \propto
+    p(\tau)e^{\beta R_\tau},
+\end{equation}
+with \(R_\tau=\sum_{t=1}^T r(z_t)\). This is exactly the canonical exponential tilting used in
+large-deviation theory for time-additive observables.
+
+Second, the relevant long-time object is the exponential growth rate of the reward-generating
+partition function
+\begin{equation}
+    Z_T(\beta)
+    =
+    \mathbb E_{p(\tau)}\!\left[e^{\beta R_\tau}\right].
+\end{equation}
+Large-deviation theory says that for long times one expects
+\begin{equation}
+    Z_T(\beta)\asymp e^{T\psi(\beta)},
+\end{equation}
+where \(\psi(\beta)\) is the scaled cumulant generating function. In the paper, the same role is
+played by the dominant eigenvalue \(\rho\) of the tilted operator:
+\begin{equation}
+    \psi(\beta)=\log \rho,
+    \qquad
+    \theta=-\frac{1}{\beta}\log \rho.
+\end{equation}
+So the free-energy-like quantity \(\theta\) is not an extra analogy added afterwards; it is the
+large-deviation growth rate written in the notation of the paper.
+
+Third, the tilted matrix
+\begin{equation}
+    \widetilde P_{ji}=P_{ji}e^{\beta r_i}
+\end{equation}
+is the standard large-deviation tilted operator for a Markov chain with additive observable
+\(\sum_t r(z_t)\). The Perron eigenvalue and Perron eigenvectors of \(\widetilde P\) therefore
+control the long-time biased trajectory ensemble. This is the Markov-chain version of the
+general large-deviation statement that long-time canonical path ensembles are governed by the
+dominant spectral data of the tilted generator or tilted transition operator.
+
+Fourth, the driven process is the large-deviation answer to the question: \emph{if the rare
+high-reward trajectories are conditioned to occur, what effective Markov dynamics makes them
+typical?} The Doob transform gives precisely that effective dynamics. In this sense, the paper's
+``optimal controlled dynamics'' is the large-deviation driven process associated with the
+reward-biased trajectory ensemble.
+
+So the logic is:
+\begin{equation}
+    p(\tau)
+    \;\longrightarrow\;
+    p(\tau)e^{\beta R_\tau}
+    \;\longrightarrow\;
+    \widetilde P
+    \;\longrightarrow\;
+    (\rho,u,v)
+    \;\longrightarrow\;
+    P_d,\;\pi^*.
+\end{equation}
+Every arrow in this chain is standard large-deviation structure specialized to an
+entropy-regularized RL problem.
+
+\subsection*{Exact finite-horizon inference versus long-time large-deviation structure}
+
+It is important not to mix two logically different statements.
+
+The first statement is the control-as-inference equivalence itself. Once the paper defines the
+optimality variables by
+\begin{equation}
+    p(O_t=1\mid z_t)\propto e^{\beta r(z_t)},
+\end{equation}
+Bayes' rule gives, for any finite horizon \(T\),
+\begin{equation}
+    p(\tau\mid O_{1:T})
+    \propto
+    p(\tau)e^{\beta R_\tau}.
+\end{equation}
+This step is exact. It does not require \(T\to\infty\), Perron-Frobenius theory, driven
+processes, or large-deviation asymptotics. It is simply the exact posterior trajectory
+distribution induced by the chosen likelihood model for the optimality variables.
+
+The second statement is the long-time structural analysis of that exact posterior. Once one asks
+for a time-independent effective dynamics, a bulk stationary distribution, a dominant
+exponential growth rate, or equivalence between a constrained and an exponentially tilted
+trajectory ensemble, then the long-time limit becomes essential. This is where large-deviation
+theory enters:
+\begin{itemize}
+    \item the tilted operator \(\widetilde P\) controls the long-time posterior weights;
+    \item the dominant eigenvalue \(\rho\) gives the asymptotic free-energy or SCGF-like rate;
+    \item the eigenvectors \(u,v\) define the bulk distribution and the Doob-transformed driven
+    process;
+    \item ensemble-equivalence statements belong to this asymptotic layer, not to the basic
+    finite-horizon Bayesian identity.
+\end{itemize}
+
+So one should read the paper in two stages:
+\begin{equation}
+    \text{entropy/KL-regularized RL}
+    \;\Longrightarrow\;
+    \text{exact finite-horizon posterior over trajectories},
+\end{equation}
+and only afterwards
+\begin{equation}
+    \text{exact posterior}
+    \;+\;
+    T\to\infty
+    \;\Longrightarrow\;
+    \text{large-deviation spectral structure}.
+\end{equation}
+The first implication is exact and finite-horizon. The second is the additional asymptotic
+content that connects the control-as-inference formulation to NESM and large-deviation theory.
+
+\subsection*{Driven process and nonequilibrium steady state}
+
+The phrase \emph{driven process} has a precise meaning here. Start from the uncontrolled Markov
+dynamics \(P\), built from the environment transition rule and the prior policy. Under this
+original dynamics, trajectories with unusually large total reward are rare. One can still define
+them by conditioning on optimality, but that conditioned object is awkward because it is
+described through a posterior over whole trajectories.
+
+The point of the Doob transform is to replace this conditioned description by a new Markov
+process \(P_d\) such that the trajectories that were rare under \(P\) become typical under
+\(P_d\). This new process is the driven process. In RL language, it is the effective controlled
+dynamics associated with the optimal policy. In NESM language, it is the auxiliary dynamics that
+realizes the biased or conditioned trajectory ensemble without explicitly conditioning at every
+step.
+
+This is why the paper writes
+\begin{equation}
+    [P_d]_{ji}
+    =
+    \frac{\widetilde P_{ji}u_j}{\rho\,u_i}.
+\end{equation}
+The original matrix \(P\) is the uncontrolled dynamics. The tilted matrix \(\widetilde P\) is
+not yet a true stochastic dynamics because probability is not conserved. The Doob transform uses
+the positive left eigenvector \(u\) and the dominant eigenvalue \(\rho\) to convert
+\(\widetilde P\) into a genuine stochastic transition matrix \(P_d\). That stochastic matrix is
+the driven process.
+
+The phrase \emph{nonequilibrium steady state} refers to the long-time stationary distribution of
+this driven dynamics. A steady state means simply that the one-time distribution no longer
+changes with time:
+\begin{equation}
+    p_{t+1}=P_d p_t,
+    \qquad
+    p_{t+1}=p_t=p_{\mathrm{ss}}.
+\end{equation}
+But this does \emph{not} imply equilibrium in the sense of detailed balance. The process can
+continue to have directional probability currents or cyclic flows while the one-time
+distribution remains stationary. That is what makes it a nonequilibrium steady state rather than
+an equilibrium state.
+
+In the language of the paper, the bulk distribution
+\begin{equation}
+    p(z_t\mid O_{1:T})\approx u(z_t)v(z_t)
+\end{equation}
+is precisely this long-time stationary distribution in the interior of a long trajectory. The
+right eigenvector \(v\) describes how surviving or optimal trajectories are distributed forward
+in time, while the left eigenvector \(u\) encodes how favorable a present state-action pair is
+for future optimality. Their product gives the bulk steady-state weight of the driven process.
+
+So one should distinguish the following three objects carefully:
+\begin{itemize}
+    \item \(P\): the uncontrolled Markov dynamics;
+    \item \(\widetilde P\): the tilted operator that reweights trajectories by reward but is not
+    itself probability conserving;
+    \item \(P_d\): the driven Markov process obtained from the Doob transform, whose stationary
+    distribution in the bulk is \(uv\).
+\end{itemize}
+The paper's main conceptual move is that the optimal-control problem can be understood through
+this driven nonequilibrium steady state.
+
+\subsection*{Why the dominant eigenvalue matters physically}
+
+Once trajectories are reweighted by \(e^{\beta R_\tau}\), the corresponding one-step operator
+is no longer a stochastic transition matrix. It becomes the tilted matrix
+\[
+    \widetilde{P}_{ji}=p(z_{t+1}=j\mid z_t=i)e^{\beta r(i)}.
+\]
+For long times, powers of \(\widetilde{P}\) are dominated by its Perron eigenvalue
+\[
+\rho=e^{-\beta\theta}.
+\]
+This is the same mechanism that appears throughout large-deviation theory:
+\begin{itemize}
+    \item long-time trajectory weights are controlled by one exponential growth or decay rate;
+    \item that rate is encoded in the dominant eigenvalue of the tilted operator;
+    \item the associated eigenvectors define the effective driven dynamics that realize the
+    biased ensemble.
+\end{itemize}
+
+In RL language, that driven dynamics becomes the optimal dynamics and the optimal policy.
+In NESM language, it is the auxiliary or driven process conditioned on a rare dynamical
+event.
+
+\subsection*{How this relates to nonequilibrium dynamics}
+
+The paper is not saying that RL is identical to all of nonequilibrium physics. The precise
+connection is narrower:
+\begin{itemize}
+    \item the environment together with the prior policy defines a Markov dynamics on
+    state-action space;
+    \item reward-biasing defines a nonequilibrium trajectory ensemble;
+    \item long-time conditioned behavior is described by a driven Markov process obtained from
+    the Doob transform.
+\end{itemize}
+
+This is a standard pattern in modern nonequilibrium dynamics: start from an unbiased
+stochastic dynamics, bias trajectories by a time-integrated observable, then derive the
+effective dynamics that makes those rare trajectories typical.
+
+\subsection*{What insight the cited papers can give}
+
+Several of the paper's references are useful because they explain one specific piece of this
+logic very clearly.
+
+\paragraph{Touchette, ``The large deviation approach to statistical mechanics''.}
+This is the best broad conceptual review. It explains why large-deviation theory naturally
+produces the same structures as thermodynamics: entropy functions, free-energy-like objects,
+Legendre transforms, and equivalence or inequivalence of ensembles.
+
+\paragraph{Jack and Sollich, ``Large deviations and ensembles of trajectories in stochastic models''.}
+This is the most directly relevant bridge from statistical mechanics to the present paper. It
+shifts the reader from state ensembles to trajectory ensembles, which is exactly the shift
+needed to understand why RL trajectories can be studied with large-deviation tools.
+
+\paragraph{Chetrite and Touchette on nonequilibrium canonical and microcanonical trajectory ensembles.}
+These papers explain why one can either:
+\begin{itemize}
+    \item condition on a rare dynamical event directly; or
+    \item bias trajectories exponentially by a conjugate parameter.
+\end{itemize}
+This is the cleanest background for understanding why the paper moves back and forth between
+``optimal trajectories'', ``posterior trajectories'', and ``tilted dynamics''.
+
+\paragraph{Giardina, Kurchan, and Peliti, ``Direct evaluation of large-deviation functions''.}
+This paper is useful because it makes large deviations computational. It shows that dominant
+eigenvalues and biased trajectory ensembles are not just abstract objects; they can be
+computed numerically. This gives good intuition for why the present RL paper turns
+eigenvector estimation into a learning problem.
+
+\paragraph{Evans, ``Rules for transition rates in nonequilibrium steady states''.}
+This is helpful for intuition about why a ``driven'' or ``auxiliary'' dynamics should exist at
+all. If one asks a system to realize an atypical flux or reward structure, the effective
+transition rules are modified in a systematic way. That is philosophically close to the role
+of the optimal dynamics in the RL paper.
+
+\subsection*{Recommended reading order}
+
+If your goal is specifically to understand this RL paper, the most efficient reading order is:
+\begin{enumerate}
+    \item Touchette's review, to learn the general large-deviation language;
+    \item Jack--Sollich, to understand trajectory ensembles instead of state ensembles;
+    \item Chetrite--Touchette, to understand conditioned processes, canonical bias, and Doob
+    transforms;
+    \item then return to the RL paper and reinterpret \(\widetilde{P}\), \(\rho\), \(u\), \(v\),
+    and \(P_d\) in that language.
+\end{enumerate}
+
+\subsection*{A one-sentence summary}
+
+The paper uses NESM and large-deviation theory because entropy-regularized RL can be
+rewritten as a biased ensemble of trajectories, and the long-time statistics of such biased
+ensembles are governed by tilted operators, dominant eigenvalues, and Doob-transformed
+dynamics.
+
+\subsection*{What a tensor network is, at the most basic level}
+
+The motivation for tensor networks is simple: a many-body object may formally be one very
+large vector, but if its entries are organized by local degrees of freedom, that vector can be
+reshaped into a high-order tensor and then approximated by a structured factorization.
+
+Suppose a global configuration is
+\begin{equation}
+    x=(x_1,x_2,\dots,x_N),
+\end{equation}
+where each local variable \(x_i\) takes \(d\) values. A scalar function on the full
+configuration space,
+\begin{equation}
+    \psi(x)=\psi(x_1,\dots,x_N),
+\end{equation}
+can be viewed as a rank-\(N\) tensor
+\begin{equation}
+    \psi_{x_1x_2\cdots x_N}.
+\end{equation}
+Writing \(\psi\) as an ordinary vector hides this tensor-product structure:
+\begin{equation}
+    \mathcal H = \bigotimes_{i=1}^{N} \mathbb{R}^{d}.
+\end{equation}
+
+The brute-force representation stores \(d^N\) numbers, which is impossible in the
+thermodynamic limit. A tensor network replaces this full table by contracted low-rank local
+tensors. In one spatial dimension the standard example is a matrix-product state (MPS):
+\begin{equation}
+    \psi(x_1,\dots,x_N)
+    =
+    \sum_{\alpha_1,\dots,\alpha_{N-1}}
+    A^{[1]}_{x_1,\alpha_1}
+    A^{[2]}_{\alpha_1,x_2,\alpha_2}
+    \cdots
+    A^{[N]}_{\alpha_{N-1},x_N}.
+\end{equation}
+The auxiliary indices \(\alpha_i\in\{1,\dots,\chi\}\) are called bond indices, and \(\chi\) is
+the bond dimension. If a good approximation exists at moderate \(\chi\), then the number of
+parameters grows like \(O(Nd\chi^2)\) instead of \(O(d^N)\).
+
+The same idea applies to operators. A linear map \(K(x',x)\) on the full configuration space
+is formally a huge matrix, but if it is built from local rules it can often be represented as a
+matrix-product operator (MPO) or, in higher dimensions, by a more general tensor network.
+
+So the basic philosophy is:
+\begin{itemize}
+    \item a global vector is reinterpreted as a tensor with one physical index per site;
+    \item a global matrix is reinterpreted as a tensor with incoming and outgoing physical
+    indices per site;
+    \item low-rank factorizations are used to exploit locality and weak long-range structure.
+\end{itemize}
+
+\subsection*{Why this is relevant here}
+
+In the maze examples of the paper, a state \(s\) is just one lattice position, so the number of
+states grows only like \(L^2\). In that setting it is perfectly reasonable to store
+\(u(s,a)\), \(v(s,a)\), and \(\widetilde P\) explicitly.
+
+But in a genuine lattice many-body system, a state is usually a full configuration,
+\begin{equation}
+    s=(s_1,\dots,s_N),
+\end{equation}
+for example an Ising spin configuration or an occupation-number configuration. Then the state
+space size is exponential in \(N\), and the paper's objects become exponentially large:
+\begin{equation}
+    u(s,a),\qquad v(s,a),\qquad \widetilde P\big((s',a'),(s,a)\big).
+\end{equation}
+At that point the tabular implementation is no longer meaningful.
+
+This is the context in which one talks about a thermodynamic limit. The question is no longer
+``can we enlarge the maze from \(9\times 9\) to \(20\times 20\)?'' but rather:
+\begin{equation}
+    N\to\infty \quad \text{or} \quad L\to\infty,
+\end{equation}
+with a local state-update rule and an extensive observable. One then asks whether the dominant
+eigenvalue, the driven process, and the optimal policy admit a controlled representation whose
+cost grows only polynomially with system size.
+
+\subsection*{How the paper's vectors become tensors}
+
+The simplest case is when there is no explicit action variable and the controlled object is a
+Markov process on configurations. Then the right Perron vector is
+\begin{equation}
+    v(s)=v(s_1,\dots,s_N),
+\end{equation}
+which can be regarded as a rank-\(N\) tensor
+\begin{equation}
+    v_{s_1\cdots s_N}.
+\end{equation}
+Likewise,
+\begin{equation}
+    u(s)=u(s_1,\dots,s_N)
+    \quad \leftrightarrow \quad
+    u_{s_1\cdots s_N}.
+\end{equation}
+
+If actions are also local, one may fold them into the local physical index and write
+\begin{equation}
+    z_i=(s_i,a_i),
+\end{equation}
+so that
+\begin{equation}
+    v(z)=v(z_1,\dots,z_N)
+    \quad \text{and} \quad
+    u(z)=u(z_1,\dots,z_N).
+\end{equation}
+If there is instead one global action coupled to the full configuration, the tensor-product
+structure is less natural. So the tensor-network route is most natural when both dynamics and
+control are local or quasi-local.
+
+In one dimension, a direct ansatz would be
+\begin{equation}
+    v(s_1,\dots,s_N)
+    \approx
+    \sum_{\alpha_1,\dots,\alpha_{N-1}}
+    B^{[1]}_{s_1,\alpha_1}
+    B^{[2]}_{\alpha_1,s_2,\alpha_2}
+    \cdots
+    B^{[N]}_{\alpha_{N-1},s_N},
+\end{equation}
+and similarly for \(u\). In higher dimensions one would need PEPS-like structures, tensor
+renormalization, or some other compressed ansatz rather than a simple matrix-product form.
+
+\subsection*{How the tilted operator becomes a tensor-network operator}
+
+The key eigenproblem in the paper is
+\begin{equation}
+    \widetilde P v = \rho v,
+    \qquad
+    u^\top \widetilde P = \rho u^\top,
+\end{equation}
+with
+\begin{equation}
+    \widetilde P_{ji}=P_{ji}e^{\beta r_i}.
+\end{equation}
+
+If the uncontrolled dynamics is local, then \(P\) is not an arbitrary dense matrix. It is built
+from local update rules. Likewise, if the reward is additive over sites or over local
+transitions,
+\begin{equation}
+    r(s,a)=\sum_{\ell} r_\ell(\text{local variables}),
+\end{equation}
+then the factor \(e^{\beta r(s,a)}\) also factorizes locally or quasi-locally. In that case,
+\(\widetilde P\) can often be represented as an MPO or another local tensor-network operator.
+
+This is exactly analogous to the transfer-matrix logic of statistical mechanics. The operator
+\(\widetilde P\) plays the role of a tilted transfer operator, and \(u\), \(v\), \(\rho\) are
+its dominant spectral data. The thermodynamic objects in the paper then become:
+\begin{equation}
+    \rho \;\; \text{dominant eigenvalue},\qquad
+    v \;\; \text{right eigen-tensor},\qquad
+    u \;\; \text{left eigen-tensor}.
+\end{equation}
+
+So at a formal level, the generalization is very clean:
+\begin{equation}
+    \text{vector} \to \text{tensor-network state},
+    \qquad
+    \text{matrix} \to \text{tensor-network operator}.
+\end{equation}
+
+\subsection*{How the driven process would be represented}
+
+In the finite-dimensional discussion of the paper, the driven process is obtained by a Doob
+transform:
+\begin{equation}
+    P_d(j\mid i)=\frac{1}{\rho}\frac{v_j}{v_i}\widetilde P_{ji}.
+\end{equation}
+
+If \(v_i\) is replaced by a tensor-network approximation \(v_\theta(s)\), then the same formula
+still defines a formal driven kernel:
+\begin{equation}
+    P_d(s'\mid s)=\frac{1}{\rho}\frac{v_\theta(s')}{v_\theta(s)}\widetilde P(s'\mid s).
+\end{equation}
+So the driven process itself does not disappear in the thermodynamic limit; what changes is the
+representation of the eigenfunction \(v\) needed to define it.
+
+The main practical difficulty is that, even if \(v_\theta\) is compact, the ratio
+\(v_\theta(s')/v_\theta(s)\) must be computable efficiently for local moves. This is plausible
+for local updates and a local tensor ansatz, but it is not automatic. One must choose the
+parameterization so that local ratios, local expectations, or effective transition weights can
+be evaluated without summing over the full configuration space.
+
+\subsection*{How a tensor-network version of \(u\)-\(\theta\) learning might look}
+
+The paper's current \(u\)-\(\theta\) learning is tabular stochastic approximation. The index
+\(\theta\) does not yet denote a neural network or tensor network in the released code. In a
+many-body extension, one could let \(\theta\) denote the local tensors of an MPS/MPO-like
+ansatz.
+
+At a schematic level, the goal would still be to solve the dominant-eigenvalue problem of the
+tilted operator. One would choose parameterized objects
+\begin{equation}
+    u_\theta,\qquad v_\phi,
+\end{equation}
+represented by tensor networks, and then minimize a residual or perform a variational power
+method so that
+\begin{equation}
+    \widetilde P v_\phi \approx \rho v_\phi,
+    \qquad
+    u_\theta^\top \widetilde P \approx \rho u_\theta^\top.
+\end{equation}
+
+There are several algorithmic possibilities:
+\begin{itemize}
+    \item a deterministic variational eigensolver for the tilted MPO;
+    \item a power method with repeated compression back into a low-bond-dimension manifold;
+    \item a sample-based stochastic update that estimates local eigenvector residuals and
+    optimizes the tensor parameters.
+\end{itemize}
+
+The third option is the closest in spirit to the paper's current learning viewpoint. But it is
+no longer a simple table update. It becomes a variational learning problem on a compressed
+manifold of many-body functions.
+
+\subsection*{What is natural, and what is still nontrivial}
+
+Some parts of the generalization are conceptually straightforward.
+
+First, the large-deviation and control-as-inference logic survives unchanged. The exact
+finite-horizon posterior identity and the long-time tilted-operator picture do not rely on the
+state space being small.
+
+Second, the Perron problem survives unchanged:
+\begin{equation}
+    \widetilde P v = \rho v.
+\end{equation}
+Only the representation of \(v\) changes.
+
+Third, the driven process also survives unchanged in formal structure because it is always a
+Doob transform of the dominant eigenfunction.
+
+What becomes nontrivial is the approximation theory.
+
+\begin{itemize}
+    \item Does \(u\) or \(v\) admit an accurate low-bond-dimension approximation?
+    \item Does the tilted operator preserve a manageable local structure after reward biasing?
+    \item Can local transition ratios for the Doob transform be computed efficiently?
+    \item In two dimensions, is an MPS too restrictive, so that one must move to PEPS-like
+    ans\"atze or other compressed representations?
+    \item If the reward couples distant sites or imposes a global constraint, does the bond
+    dimension have to grow rapidly with system size?
+\end{itemize}
+
+So one should not say that tensor networks automatically solve the thermodynamic-limit problem.
+What is true is more precise: they provide a plausible representation class for the dominant
+eigenvectors and operators when the underlying dynamics and observable are sufficiently local.
+
+\subsection*{A precise interpretation of the supervisor's suggestion}
+
+When your supervisor says that the vectors can be generalized to tensors and treated with
+tensor-network ideas, the mathematically precise interpretation is probably the following.
+
+Instead of indexing \(u\) and \(v\) by one global state label,
+\begin{equation}
+    u_i,\qquad v_i,
+\end{equation}
+rewrite the state as a product configuration
+\begin{equation}
+    i \leftrightarrow (s_1,\dots,s_N),
+\end{equation}
+and reinterpret
+\begin{equation}
+    u_i \to u_{s_1\cdots s_N},
+    \qquad
+    v_i \to v_{s_1\cdots s_N}.
+\end{equation}
+Then replace explicit storage of all components by a compressed factorization, and solve the
+tilted Perron problem variationally in that compressed class. The eventual hope is to obtain:
+\begin{itemize}
+    \item a scalable approximation of the dominant eigenvalue density or free-energy density;
+    \item a scalable approximation of the bulk controlled or driven state distribution;
+    \item a scalable approximation of local observables under the optimal or driven dynamics.
+\end{itemize}
+
+That is a real research program. It is not implemented in the present code, but it is a
+mathematically coherent direction for extending the paper from small discrete environments to
+many-body thermodynamic limits.
+
+\end{document}

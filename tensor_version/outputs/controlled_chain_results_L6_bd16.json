@@ -1,0 +1,83 @@
+{
+  "params": {
+    "L": 6,
+    "N": 3,
+    "beta": 1.0,
+    "V": 0.7,
+    "lam": 0.25,
+    "c_plus": 0.03,
+    "c_minus": 0.03,
+    "q_plus": 0.9,
+    "q_minus": 0.9,
+    "seed": 7
+  },
+  "sizes": {
+    "num_states": 20,
+    "num_actions": 10,
+    "state_action_dim": 200,
+    "mps_bond_dim": 16
+  },
+  "step1_exact": {
+    "rho": 0.7752221495016309,
+    "relative_residual": 2.4673048327208136e-15,
+    "policy_examples": [
+      {
+        "state": "111000",
+        "best_action": [
+          2,
+          1
+        ],
+        "best_prob": 0.7221725022203672,
+        "nn_occupancy": 2
+      },
+      {
+        "state": "110100",
+        "best_action": [
+          3,
+          1
+        ],
+        "best_prob": 0.30668386768830636,
+        "nn_occupancy": 1
+      },
+      {
+        "state": "110010",
+        "best_action": [
+          1,
+          1
+        ],
+        "best_prob": 0.43470822026138056,
+        "nn_occupancy": 1
+      },
+      {
+        "state": "110001",
+        "best_action": [
+          1,
+          1
+        ],
+        "best_prob": 0.467298169211016,
+        "nn_occupancy": 1
+      },
+      {
+        "state": "101100",
+        "best_action": [
+          3,
+          1
+        ],
+        "best_prob": 0.5347947527830947,
+        "nn_occupancy": 1
+      }
+    ]
+  },
+  "step2_mps_model_based": {
+    "rho": 0.7749619675522341,
+    "rho_rel_error": 0.00033562244005034327,
+    "relative_residual": 0.00037686692290767303,
+    "u_cosine_with_exact": 0.9999992523122082
+  },
+  "step3_mps_sampled_u_theta": {
+    "rho": 0.21485797455902114,
+    "rho_rel_error": 0.7228433492294468,
+    "relative_residual": 0.050833258917121496,
+    "u_cosine_with_exact": 0.0008083822075012169
+  }
+}

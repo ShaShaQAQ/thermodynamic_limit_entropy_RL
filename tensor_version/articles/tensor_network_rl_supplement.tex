@@ -1,0 +1,1090 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,bm,mathtools}
+\usepackage{hyperref}
+\usepackage{CJKutf8}
+
+\title{从熵正则强化学习到张量网络表示的受控格点随机过程}
+\author{}
+\date{}
+
+\begin{document}
+\begin{CJK*}{UTF8}{gbsn}
+\maketitle
+\tableofcontents
+
+\section{问题的重新定位}
+
+\subsection{原始 maze 问题的问题在哪里}
+
+Arriojas 等人的文章给出了一条很有用的数学线索：熵正则强化学习的长时间极限可以写成
+tilted Markov operator 的 Perron 本征问题。对有限状态动作空间，设
+\begin{equation}
+    z=(s,a),
+    \qquad
+    P_0(z'\mid z)=p(s'\mid s,a)\pi_0(a'\mid s'),
+\end{equation}
+其中 \(\pi_0\) 是 prior policy。一步 reward 为 \(r(z)\)。对应的 tilted operator 为
+\begin{equation}
+    K_\beta(z'\mid z)=e^{\beta r(z)}P_0(z'\mid z).
+    \label{eq:tilted-finite}
+\end{equation}
+长时间轨迹权重由 \(K_\beta\) 的主本征结构控制：
+\begin{equation}
+    K_\beta u_\beta=\rho_\beta u_\beta,
+    \qquad
+    \ell_\beta^\top K_\beta=\rho_\beta \ell_\beta^\top.
+    \label{eq:finite-pf}
+\end{equation}
+在这个记号下，最优 policy 为
+\begin{equation}
+    \pi_\beta^*(a\mid s)
+    =
+    \frac{\pi_0(a\mid s)u_\beta(s,a)}
+    {\sum_{b}\pi_0(b\mid s)u_\beta(s,b)}.
+    \label{eq:optimal-policy-finite}
+\end{equation}
+
+有限 maze 的例子适合说明这一点，但它不适合成为热力学极限问题。原因是单个 agent 在
+\(L\times L\) maze 中运动时，状态空间虽然随 \(L\) 增大，但它并不是一个由大量局域自由度组成的
+many-body 配置空间。把 maze 做大更多是在做单粒子的无限体积极限，而不是统计物理意义上的自由度数
+趋于无穷。
+
+因此，如果目标是把这套理论和张量网络、热力学极限联系起来，不能只把 maze 放大。我们需要把
+MDP 本身改造成一列受控 many-body 随机过程。
+
+\subsection{固定格点随机模型还不够}
+
+一个自然想法是从 East model、FA model、SSEP、ASEP 等一维格点随机模型出发。这些模型确实有
+清楚的热力学极限，也天然可以用 MPO/MPS 处理 tilted generator。但如果只研究一个固定的
+Markov process
+\begin{equation}
+    x_t\to x_{t+1},
+\end{equation}
+那么 action 变量消失了。此时我们研究的是被偏置的轨迹系综或 Doob transform，而不是一个真正的
+强化学习问题。
+
+固定动力学的 tilted operator 是
+\begin{equation}
+    \widetilde P_\lambda(x'\mid x)
+    =
+    P(x'\mid x)e^{\lambda A(x,x')},
+\end{equation}
+主本征值给出 scaled cumulant generating function。这是非平衡统计物理中的 dynamical large
+deviation 问题。它与 Arriojas 文章有同构的谱结构，但 \(u\)-\(\theta\) learning 只是求主本征向量的
+一种样本算法，并没有真正体现 agent 的决策。
+
+所以本文要走的路线是：
+\begin{equation}
+    \boxed{
+    \text{受控格点随机模型}
+    =
+    \text{many-body Markov process}
+    +
+    \text{agent action}
+    +
+    \text{entropy regularization}.
+    }
+\end{equation}
+
+\section{受控格点 MDP 的基本形式}
+
+\subsection{many-body 状态空间}
+
+考虑一维长度为 \(L\) 的链。每个 site 有局域变量
+\begin{equation}
+    x_i\in\mathcal X,
+    \qquad
+    |\mathcal X|=d.
+\end{equation}
+全局状态为
+\begin{equation}
+    x=(x_1,\dots,x_L)\in\mathcal X^L.
+\end{equation}
+例如：
+\begin{equation}
+    x_i=n_i\in\{0,1\}
+    \quad
+    \text{表示 occupation variable,}
+\end{equation}
+或者
+\begin{equation}
+    x_i=\sigma_i\in\{-1,+1\}
+    \quad
+    \text{表示 Ising spin.}
+\end{equation}
+
+热力学极限不是 \(T\to\infty\)，而是
+\begin{equation}
+    L\to\infty.
+\end{equation}
+长时间极限仍然存在，用来提取轨迹自由能；热力学极限则要求研究
+\begin{equation}
+    \lim_{L\to\infty}\frac{1}{L}\log\rho_{\beta,L}
+\end{equation}
+这样的密度量。
+
+\subsection{动作必须是物理控制变量}
+
+为了让问题保持 RL 的含义，action 不能只是事后给 transition 贴标签，而必须是 agent 能选择的控制。
+几种合适的 action 设计包括：
+\begin{enumerate}
+    \item 选择一个 site \(i\) 尝试更新；
+    \item 选择一个 bond \((i,i+1)\) 尝试 hopping；
+    \item 选择局域 field、chemical potential 或 hopping bias；
+    \item 选择局域温度、翻转速率或驱动强度；
+    \item 在量子版本中选择局域 gate、measurement setting 或 feedback operation。
+\end{enumerate}
+
+于是 MDP 的基本对象是
+\begin{equation}
+    p(x'\mid x,a),
+    \qquad
+    r(x,a),
+    \qquad
+    \pi(a\mid x).
+\end{equation}
+prior policy 记为 \(\pi_0(a\mid x)\)，它可以是均匀选择 site、均匀选择 bond，或某个无控制的自然采样规则。
+
+\subsection{state-action Perron 问题}
+
+定义 state-action 变量
+\begin{equation}
+    z=(x,a).
+\end{equation}
+在 prior policy 下，一步 state-action 转移核为
+\begin{equation}
+    P_0(x',a'\mid x,a)
+    =
+    p(x'\mid x,a)\pi_0(a'\mid x').
+    \label{eq:state-action-prior}
+\end{equation}
+tilted operator 为
+\begin{equation}
+    K_\beta(x',a'\mid x,a)
+    =
+    e^{\beta r(x,a)}
+    p(x'\mid x,a)\pi_0(a'\mid x').
+    \label{eq:state-action-tilted}
+\end{equation}
+长时间极限下，核心方程是
+\begin{equation}
+    \sum_{x',a'}
+    K_\beta(x',a'\mid x,a)u_\beta(x',a')
+    =
+    \rho_\beta u_\beta(x,a).
+    \label{eq:state-action-pf}
+\end{equation}
+等价地，
+\begin{equation}
+    e^{\beta r(x,a)}
+    \mathbb E_{x'\sim p(\cdot\mid x,a),\,a'\sim\pi_0(\cdot\mid x')}
+    \big[u_\beta(x',a')\big]
+    =
+    \rho_\beta u_\beta(x,a).
+    \label{eq:conditional-pf}
+\end{equation}
+
+最优 policy 仍由 Perron eigenfunction 给出：
+\begin{equation}
+    \pi_\beta^*(a\mid x)
+    =
+    \frac{\pi_0(a\mid x)u_\beta(x,a)}
+    {\sum_b\pi_0(b\mid x)u_\beta(x,b)}.
+    \label{eq:many-body-policy}
+\end{equation}
+这一步是 RL 与普通大偏差谱问题的分界线。普通大偏差只需要 tilted generator 的主本征值和 Doob
+transform；这里还要从 \(u_\beta(x,a)\) 读出一个可执行的最优决策规则。
+
+\section{具体模型：最近邻 reward 的多 agent 受控链}
+
+\subsection{状态空间与 hard-core 约束}
+
+现在把原来的单 agent maze 改成一个真正的 many-body MDP。考虑长度为 \(L\) 的一维链，
+每个格点最多容纳一个 agent。用 occupation variable 表示状态：
+\begin{equation}
+    n_i\in\{0,1\},
+    \qquad
+    n=(n_1,\dots,n_L)\in\{0,1\}^L.
+\end{equation}
+其中 \(n_i=1\) 表示第 \(i\) 个格点被某个 agent 占据，\(n_i=0\) 表示空位。若希望固定 agent 数，
+则限制在
+\begin{equation}
+    \mathcal S_{L,N}
+    =
+    \left\{
+        n\in\{0,1\}^L:
+        \sum_{i=1}^L n_i=N
+    \right\}.
+    \label{eq:fixed-particle-sector}
+\end{equation}
+热力学极限取
+\begin{equation}
+    L\to\infty,
+    \qquad
+    N\to\infty,
+    \qquad
+    \bar\rho=\frac{N}{L}\ \text{fixed}.
+\end{equation}
+这与单 agent maze 的区别是本质性的：状态不再是一个位置变量，而是一条长度为 \(L\) 的二值构型。
+状态空间维数随 \(L\) 指数增长，或在固定粒子数 sector 中按 \(\binom{L}{N}\) 增长。
+
+\subsection{action：选择一个局域移动}
+
+动作定义为选择一条相邻 bond 和一个移动方向：
+\begin{equation}
+    a=(i,\sigma),
+    \qquad
+    i=1,\dots,L-1,
+    \qquad
+    \sigma\in\{+,-\}.
+    \label{eq:bond-action}
+\end{equation}
+其中 \(\sigma=+\) 表示尝试把 agent 从 \(i\) 移到 \(i+1\)，\(\sigma=-\) 表示尝试把 agent 从
+\(i+1\) 移到 \(i\)。这就是 ``action 是移动它们'' 的精确定义。
+
+给定 action \(a=(i,+)\)，只有当局域构型为
+\begin{equation}
+    (n_i,n_{i+1})=(1,0)
+\end{equation}
+时，向右移动才合法；移动后局域构型变为 \((0,1)\)。若局域构型不是 \((1,0)\)，则状态保持不变。
+类似地，给定 \(a=(i,-)\)，只有当
+\begin{equation}
+    (n_i,n_{i+1})=(0,1)
+\end{equation}
+时，向左移动才合法；移动后局域构型变为 \((1,0)\)。
+
+为了允许环境随机性，可以引入成功概率 \(q_\sigma\in[0,1]\)。定义局域两格点 transition gate
+\begin{equation}
+    G_i^\sigma(n_i',n_{i+1}'\mid n_i,n_{i+1}).
+\end{equation}
+对 \(\sigma=+\)，
+\begin{equation}
+    G_i^+(01\mid 10)=q_+,
+    \qquad
+    G_i^+(10\mid 10)=1-q_+,
+\end{equation}
+其它不满足右移条件的构型保持不变：
+\begin{equation}
+    G_i^+(ab\mid ab)=1,
+    \qquad
+    ab\neq 10.
+\end{equation}
+对 \(\sigma=-\)，
+\begin{equation}
+    G_i^-(10\mid 01)=q_-,
+    \qquad
+    G_i^-(01\mid 01)=1-q_-,
+\end{equation}
+其它不满足左移条件的构型保持不变：
+\begin{equation}
+    G_i^-(ab\mid ab)=1,
+    \qquad
+    ab\neq 01.
+\end{equation}
+于是全局 transition kernel 为
+\begin{equation}
+    p(n'\mid n,a=(i,\sigma))
+    =
+    G_i^\sigma(n_i',n_{i+1}'\mid n_i,n_{i+1})
+    \prod_{k\neq i,i+1}\delta_{n_k',n_k}.
+    \label{eq:controlled-local-transition}
+\end{equation}
+确定性移动是 \(q_+=q_-=1\) 的特例。
+
+\subsection{最近邻 reward}
+
+现在把 reward 取成移动后构型的最近邻函数。最基本的选择是
+\begin{equation}
+    \Phi(n')
+    =
+    -V\sum_{k=1}^{L-1} n_k'n_{k+1}'.
+    \label{eq:nn-potential}
+\end{equation}
+若 \(V>0\)，相邻占据受到惩罚，agent 倾向分散；若 \(V<0\)，相邻占据受到奖励，agent 倾向聚集。
+这正是 ``reward 依赖最近邻 agent 位置'' 的 occupation 版本。
+
+也可以加入方向性输运项。定义一步电流
+\begin{equation}
+    J(n,a,n')
+    =
+    \begin{cases}
+        +1, & a=(i,+)\text{ 且 }10\to 01\text{ 成功发生},\\
+        -1, & a=(i,-)\text{ 且 }01\to 10\text{ 成功发生},\\
+        0, & \text{否则}.
+    \end{cases}
+\end{equation}
+完整一步 reward 取为
+\begin{equation}
+    r(n,a,n')
+    =
+    \Phi(n')
+    +
+    \lambda J(n,a,n')
+    -
+    c_\sigma.
+    \label{eq:nn-reward}
+\end{equation}
+其中 \(\lambda\) 控制是否鼓励净向右输运，\(c_\sigma\) 是动作代价。若只想研究最近邻相互作用，
+可令 \(\lambda=0\)。
+
+在熵正则 control-as-inference 中，长时间轨迹权重包含
+\begin{equation}
+    \exp\left[
+        \beta
+        \sum_{t=0}^{T-1}
+        r(n_t,a_t,n_{t+1})
+    \right].
+\end{equation}
+因为 \(\Phi(n')\) 是最近邻加和，指数权重可分解为相邻 bond 权重：
+\begin{equation}
+    e^{\beta\Phi(n')}
+    =
+    \prod_{k=1}^{L-1}
+    \omega(n_k',n_{k+1}'),
+    \qquad
+    \omega(a,b)=e^{-\beta Vab}.
+    \label{eq:nn-boltzmann-factor}
+\end{equation}
+这正是 MPO 表示成立的关键局域性。
+
+\subsection{state-action tilted operator}
+
+令 prior policy 为均匀选择 bond 和方向：
+\begin{equation}
+    \pi_0(a\mid n)
+    =
+    \frac{1}{2(L-1)}.
+    \label{eq:uniform-prior}
+\end{equation}
+也可以把非法动作排除在 prior 之外，但均匀选择所有动作更简单，因为非法动作已经通过
+\eqref{eq:controlled-local-transition} 自动变成 ``不动'' transition。
+
+state-action tilted operator 为
+\begin{equation}
+    K_\beta(n',a'\mid n,a)
+    =
+    p(n'\mid n,a)\,
+    \pi_0(a'\mid n')\,
+    e^{\beta r(n,a,n')}.
+    \label{eq:concrete-tilted-operator}
+\end{equation}
+Perron 方程为
+\begin{equation}
+    \sum_{n',a'}
+    p(n'\mid n,a)\pi_0(a'\mid n')
+    e^{\beta r(n,a,n')}
+    u_\beta(n',a')
+    =
+    \rho_{\beta,L}u_\beta(n,a).
+    \label{eq:concrete-perron}
+\end{equation}
+由此得到最优移动策略
+\begin{equation}
+    \pi_\beta^*(a\mid n)
+    =
+    \frac{\pi_0(a\mid n)u_\beta(n,a)}
+    {\sum_b\pi_0(b\mid n)u_\beta(n,b)}.
+    \label{eq:concrete-policy}
+\end{equation}
+因此 agent 学到的是：在当前多 agent 构型 \(n\) 下，选择哪条 bond、哪个方向移动，才能在最近邻
+相互作用、电流偏置和熵正则代价之间达到最优折中。
+
+\section{这个模型的 MPS/MPO 表示}
+
+\subsection{把 state-action 对编码成一维局域变量}
+
+Perron eigenfunction 的自变量不是单纯的 occupation 构型 \(n\)，而是 state-action 对
+\begin{equation}
+    (n,a)=(n,(i,\sigma)).
+\end{equation}
+为了用 MPS 表示 \(u_\beta(n,a)\)，把 action 写成一条 bond-marker 字符串。对每条 bond
+\((i,i+1)\) 定义
+\begin{equation}
+    m_i\in\{0,+,-\},
+    \qquad
+    i=1,\dots,L-1.
+\end{equation}
+若 action 是 \(a=(i,+)\)，则 \(m_i=+\)，其余 \(m_j=0\)；若 action 是 \(a=(i,-)\)，
+则 \(m_i=-\)，其余 \(m_j=0\)。合法 action-marker sector 为
+\begin{equation}
+    \mathcal M_L
+    =
+    \left\{
+        m\in\{0,+,-\}^{L-1}:
+        \sum_{i=1}^{L-1}\mathbf 1_{m_i\neq 0}=1
+    \right\}.
+    \label{eq:marker-sector}
+\end{equation}
+为方便写成长度为 \(L\) 的 MPS，可令 \(m_L=0\)，并把第 \(i\) 个 site 的局域物理指标取为
+\begin{equation}
+    y_i=(n_i,m_i),
+    \qquad
+    y_i\in\{0,1\}\times\{0,+,-\}
+    \quad (i<L),
+\end{equation}
+最后一个 site 固定 \(m_L=0\)。因此 bulk 局域维数是
+\begin{equation}
+    d_{\mathrm{loc}}=2\times 3=6.
+\end{equation}
+
+在这个扩展空间中，state-action Perron eigenfunction 写成 MPS：
+\begin{equation}
+    u_\theta(n,m)
+    =
+    \sum_{\alpha_1,\dots,\alpha_{L-1}}
+    A^{[1]}_{y_1,\alpha_1}
+    A^{[2]}_{\alpha_1,y_2,\alpha_2}
+    \cdots
+    A^{[L]}_{\alpha_{L-1},y_L}.
+    \label{eq:state-action-mps}
+\end{equation}
+这里 \(m\) 与 \(a\) 一一对应，所以也写作 \(u_\theta(n,a)\)。实际计算时只在
+\eqref{eq:marker-sector} 的合法 sector 上评估 \(u_\theta\)。
+
+Perron eigenfunction 应为正。可以采取两种方式：
+\begin{enumerate}
+    \item 直接优化 \(u_\theta\)，并通过非负张量或投影保持正性；
+    \item 写成
+    \begin{equation}
+        u_\theta(n,a)=\exp f_\theta(n,a),
+        \label{eq:positive-param}
+    \end{equation}
+    其中 \(f_\theta\) 由 MPS 或 tensor train 表示。
+\end{enumerate}
+第一种更贴近线性本征值问题；第二种数值上更稳定，尤其适合 sample-based learning。
+
+\subsection{MPS 诱导的 policy}
+
+给定 \(u_\theta(n,a)\)，policy 由 control-as-inference 公式确定，而不是任意另设一个 actor：
+\begin{equation}
+    \pi_\theta(a\mid n)
+    =
+    \frac{\pi_0(a\mid n)u_\theta(n,a)}
+    {\sum_b\pi_0(b\mid n)u_\theta(n,b)}.
+    \label{eq:tn-policy}
+\end{equation}
+在当前模型中 action 数为 \(2(L-1)\)，所以分母可写成显式有限和：
+\begin{equation}
+    Z_\theta(n)
+    =
+    \sum_{i=1}^{L-1}
+    \sum_{\sigma=\pm}
+    \pi_0((i,\sigma)\mid n)
+    u_\theta(n,(i,\sigma)).
+    \label{eq:policy-normalizer}
+\end{equation}
+若 \(\pi_0\) 是 \eqref{eq:uniform-prior} 的均匀 prior，则
+\begin{equation}
+    \pi_\theta((i,\sigma)\mid n)
+    =
+    \frac{u_\theta(n,(i,\sigma))}
+    {\sum_{j=1}^{L-1}\sum_{\tau=\pm}u_\theta(n,(j,\tau))}.
+\end{equation}
+因此 MPS 的实际用途非常明确：它给每一个候选局域移动 \((i,\sigma)\) 一个正权重，
+再归一化为移动概率。
+
+\subsection{局域 transition gate 的 MPO 结构}
+
+先只看由 action 决定的 controlled transition。对固定 \(a=(i,\sigma)\)，
+\eqref{eq:controlled-local-transition} 只作用在两个相邻 site 上。因此它是一个局域 gate：
+\begin{equation}
+    T_{i,\sigma}
+    =
+    I_1\otimes\cdots\otimes I_{i-1}
+    \otimes G_i^\sigma
+    \otimes I_{i+2}\otimes\cdots\otimes I_L.
+    \label{eq:local-transition-gate}
+\end{equation}
+若把 action marker 也作为物理指标的一部分，输入 marker \(m_i=\sigma\) 用来选择这个 gate。
+定义 projector
+\begin{equation}
+    \mathcal P_{i,\sigma}^{\mathrm{in}}(m)
+    =
+    \mathbf 1_{m_i=\sigma}
+    \prod_{j\neq i}\mathbf 1_{m_j=0}.
+\end{equation}
+则 ``读取输入 action 并执行对应局域移动'' 的 operator 可写成
+\begin{equation}
+    \mathcal T
+    =
+    \sum_{i=1}^{L-1}
+    \sum_{\sigma=\pm}
+    \mathcal P_{i,\sigma}^{\mathrm{in}}
+    T_{i,\sigma}.
+    \label{eq:controlled-transition-operator}
+\end{equation}
+这是一个 MPO。理由是 \(\mathcal T\) 是沿链的有限状态自动机：它从左到右扫描 marker，
+在没有看到非零 marker 前传播 ``idle'' 状态；看到唯一的 \(+\) 或 \(-\) marker 时，
+在当前 bond 上放置 \(G_i^+\) 或 \(G_i^-\)；之后传播 ``done'' 状态并要求不再出现第二个 marker。
+这种 ``局域项之和加单 marker 约束'' 的结构需要的 MPO bond dimension 不随 \(L\) 增长。
+
+\subsection{最近邻 reward 的 diagonal MPO}
+
+最近邻 reward 的指数权重是
+\begin{equation}
+    e^{\beta\Phi(n')}
+    =
+    \prod_{k=1}^{L-1}
+    \omega(n_k',n_{k+1}'),
+    \qquad
+    \omega(a,b)=e^{-\beta Vab}.
+\end{equation}
+它定义了一个只依赖输出构型 \(n'\) 的 diagonal operator：
+\begin{equation}
+    \mathcal D_\Phi(n'\mid n')
+    =
+    e^{\beta\Phi(n')}.
+\end{equation}
+这个 operator 是 MPO，因为它是一个一维最近邻 classical Boltzmann weight。显式地，可把
+\(\omega\) 分解为有限秩形式
+\begin{equation}
+    \omega(a,b)=\sum_{\mu=1}^{r}B_{a\mu}C_{\mu b},
+    \qquad
+    r\le 2.
+\end{equation}
+于是
+\begin{equation}
+    e^{\beta\Phi(n')}
+    =
+    \sum_{\mu_1,\dots,\mu_{L-1}}
+    B_{n_1'\mu_1}
+    C_{\mu_1 n_2'}B_{n_2'\mu_2}
+    \cdots
+    C_{\mu_{L-1} n_L'}.
+    \label{eq:reward-mpo-factorization}
+\end{equation}
+这就是 diagonal MPO 的矩阵乘积形式。若还加入局域势能 \(\sum_i U_i n_i'\)，只需把单点权重
+吸收到相邻张量中。
+
+电流项和动作代价是 action-local 的。对 marker \(m_i=\sigma\)，定义
+\begin{equation}
+    e^{\beta[\lambda J(n,a,n')-c_\sigma]}.
+\end{equation}
+它只依赖 active bond 的输入/输出局域构型与方向 marker，因此可并入 \(G_i^\sigma\)：
+\begin{equation}
+    \widehat G_i^\sigma
+    =
+    e^{\beta[\lambda J_i^\sigma-c_\sigma]}
+    G_i^\sigma.
+    \label{eq:tilted-local-gate}
+\end{equation}
+因此最近邻 interaction 给出 diagonal MPO，移动电流和动作代价给出 active bond 上的 tilted local
+gate。
+
+\subsection{next-action prior 的 MPO}
+
+state-action operator 不只从 \(n\) 到 \(n'\)，还要从当前 action marker \(m\) 到下一步 action marker
+\(m'\)。这一步由 prior policy 给出。均匀 prior 时，
+\begin{equation}
+    \Pi_0(m'\mid n')
+    =
+    \frac{1}{2(L-1)}
+    \mathbf 1_{m'\in\mathcal M_L}.
+    \label{eq:marker-prior}
+\end{equation}
+它不依赖 \(n'\)，只要求输出 marker 字符串合法且只有一个非零 marker。这个约束同样是有限状态自动机，
+因此也是 MPO：从左到右扫描输出 marker，记录是否已经看到一个非零 marker，并在链末端只接受
+``恰好看到一次'' 的路径。
+
+在实际算法中，不一定要显式构造 \(\Pi_0\)。Perron 方程右边需要的是
+\begin{equation}
+    \sum_{a'}\pi_0(a'\mid n')u_\theta(n',a')
+    =
+    \frac{1}{2(L-1)}
+    \sum_{j=1}^{L-1}
+    \sum_{\tau=\pm}
+    u_\theta(n',(j,\tau)).
+    \label{eq:sum-over-next-actions}
+\end{equation}
+这个量可以通过枚举 \(2(L-1)\) 个 marker 位置直接收缩 MPS 得到，复杂度多一个 \(O(L)\) 因子。
+若要做完全 model-based 的 MPO-MPS 本征值求解，则把 \(\Pi_0\) 显式并入 MPO。
+
+\subsection{完整 state-action tilted MPO}
+
+把上述三个部分合在一起，完整 tilted operator 可形式化写为
+\begin{equation}
+    K_\beta
+    =
+    \Pi_0\,
+    \mathcal D_\Phi\,
+    \widehat{\mathcal T},
+    \label{eq:mpo-factorized-k}
+\end{equation}
+其中
+\begin{equation}
+    \widehat{\mathcal T}
+    =
+    \sum_{i=1}^{L-1}
+    \sum_{\sigma=\pm}
+    \mathcal P_{i,\sigma}^{\mathrm{in}}
+    \widehat T_{i,\sigma},
+    \qquad
+    \widehat T_{i,\sigma}
+    =
+    I\otimes\cdots\otimes \widehat G_i^\sigma\otimes\cdots\otimes I.
+\end{equation}
+这里 \(\widehat{\mathcal T}\) 执行由当前 action 指定的局域移动并加入 active-bond reward；
+\(\mathcal D_\Phi\) 加入移动后构型的最近邻相互作用 reward；\(\Pi_0\) 生成下一步 prior action。
+每一项都是 MPO，有限个 MPO 的乘积仍是 MPO。因此
+\begin{equation}
+    K_\beta(n',m'\mid n,m)
+    =
+    \sum_{\gamma_1,\dots,\gamma_{L-1}}
+    W^{[1]}_{\gamma_0,\gamma_1}(y_1',y_1)
+    W^{[2]}_{\gamma_1,\gamma_2}(y_2',y_2)
+    \cdots
+    W^{[L]}_{\gamma_{L-1},\gamma_L}(y_L',y_L),
+    \label{eq:explicit-k-mpo}
+\end{equation}
+其中 \(y_i=(n_i,m_i)\)、\(y_i'=(n_i',m_i')\)，边界 bond index 固定为
+\(\gamma_0=\gamma_L=1\)。MPO bond index \(\gamma_i\) 的物理含义是有限状态自动机的内部状态：
+它需要记录输入 marker 是否已经被发现、局域 gate 是否正在跨越当前 bond、输出 marker 是否已经被生成，
+以及最近邻 reward 的一个短程记忆指标。
+
+于是 model-based 问题就是非厄米 MPO 的主本征问题：
+\begin{equation}
+    K_\beta^{\mathrm{MPO}}
+    u_\theta^{\mathrm{MPS}}
+    \approx
+    \rho_{\beta,L}
+    u_\theta^{\mathrm{MPS}}.
+    \label{eq:mpo-mps-eigen}
+\end{equation}
+可用 DMRG-like sweeping、Arnoldi-DMRG 或 VUMPS-like fixed point 方法求解。它的功能是提供基准答案：
+\begin{enumerate}
+    \item 检查 MPS 是否能表达 \(u_\beta(n,a)\)；
+    \item 计算 \(\rho_{\beta,L}\) 和自由能密度；
+    \item 通过 \eqref{eq:tn-policy} 生成最优移动 policy；
+    \item 与 sample-based \(u\)-\(\theta\) learning 比较。
+\end{enumerate}
+
+\section{\texorpdfstring{\(u\)-\(\theta\)}{u-theta} learning 的位置}
+
+\subsection{它不是替代 RL 的物理动机，而是 model-free 求解器}
+
+在受控格点 MDP 中，\(u\)-\(\theta\) learning 的合理定位是：
+\begin{equation}
+    \text{不知道完整 }p(n'\mid n,a)\text{ 时，用采样 transition 学 Perron eigenfunction。}
+\end{equation}
+它学习的不是普通 discounted value function，而是方程
+\begin{equation}
+    e^{\beta r(n,a,n')}
+    u_\theta(n',a')
+    \approx
+    \rho u_\theta(n,a)
+\end{equation}
+所定义的 multiplicative Bellman eigenfunction。
+
+从 prior dynamics 采样
+\begin{equation}
+    a_t\sim\pi_0(\cdot\mid n_t),
+    \qquad
+    n_{t+1}\sim p(\cdot\mid n_t,a_t),
+    \qquad
+    a_{t+1}\sim\pi_0(\cdot\mid n_{t+1}).
+\end{equation}
+定义单样本残差
+\begin{equation}
+    \delta_t
+    =
+    e^{\beta r_t}u_\theta(n_{t+1},a_{t+1})
+    -
+    \rho u_\theta(n_t,a_t).
+    \label{eq:td-residual-u}
+\end{equation}
+样本损失为
+\begin{equation}
+    \mathcal L(\theta,\rho)
+    =
+    \mathbb E_{\pi_0,p}
+    \left[
+        \delta_t^2
+    \right].
+    \label{eq:u-theta-loss}
+\end{equation}
+这就是 tabular \(u\)-\(\theta\) learning 的张量网络版本。
+
+\subsection{用 MPS 参数做随机优化}
+
+若
+\begin{equation}
+    u_\theta(n,a)=\exp f_\theta(n,a),
+\end{equation}
+则可以用 log-residual 避免数值爆炸：
+\begin{equation}
+    \varepsilon_t
+    =
+    \beta r_t
+    +
+    f_\theta(n_{t+1},a_{t+1})
+    -
+    f_\theta(n_t,a_t)
+    -
+    \log\rho.
+    \label{eq:log-residual}
+\end{equation}
+理想情况下 \(\varepsilon_t=0\)。于是可最小化
+\begin{equation}
+    \mathcal L_{\log}(\theta,\rho)
+    =
+    \mathbb E_{\pi_0,p}
+    \left[
+        \varepsilon_t^2
+    \right].
+    \label{eq:log-loss}
+\end{equation}
+
+这个写法牺牲了一些原始线性 Perron 方程的结构，但更适合大体系数值优化。实际算法可以是：
+\begin{enumerate}
+    \item 初始化 MPS 或 iMPS 参数 \(f_\theta(n,a)\)；
+    \item 用 prior policy 与原始环境采样 \((n_t,a_t,r_t,n_{t+1},a_{t+1})\)；
+    \item 计算 \(\varepsilon_t\)；
+    \item 用自动微分或 MPS 局域环境更新 \(\theta\)；
+    \item 同时更新 \(\log\rho\)；
+    \item 周期性 canonicalize MPS，并控制 bond dimension；
+    \item 用 \eqref{eq:tn-policy} 生成 policy，模拟受控轨迹并测量 observables。
+\end{enumerate}
+
+这一路线保留了 RL 的含义：agent 通过采样交互学习一个能够诱导最优控制策略的 state-action
+eigenfunction，而不是预先构造完整的指数大矩阵。
+
+\section{热力学极限中应测量什么}
+
+\subsection{自由能密度}
+
+有限长度 \(L\) 下，主本征值为 \(\rho_{\beta,L}\)。离散时间中自然定义
+\begin{equation}
+    \psi_L(\beta)=\log\rho_{\beta,L}.
+\end{equation}
+若 reward 是 extensive 的局域加和，热力学极限中稳定对象通常是
+\begin{equation}
+    \psi(\beta)
+    =
+    \lim_{L\to\infty}
+    \frac{1}{L}\psi_L(\beta).
+    \label{eq:free-energy-density}
+\end{equation}
+若采用 Arriojas 的记号 \(\rho=e^{-\beta\theta}\)，则对应
+\begin{equation}
+    \theta_L=-\frac{1}{\beta}\log\rho_{\beta,L},
+    \qquad
+    \theta_\infty
+    =
+    \lim_{L\to\infty}\frac{\theta_L}{L}.
+\end{equation}
+
+\subsection{policy 诱导的稳态与局域观测量}
+
+给定 \(\pi_\theta(a\mid n)\)，可以模拟受控动力学
+\begin{equation}
+    n_t\xrightarrow{a_t\sim\pi_\theta(\cdot\mid n_t)}n_{t+1}.
+\end{equation}
+应测量的量包括：
+\begin{enumerate}
+    \item 电流密度 \(J/L\)；
+    \item activity density；
+    \item density profile \(\langle n_i\rangle\)；
+    \item 最近邻占据密度 \(\langle n_i n_{i+1}\rangle\)；
+    \item 两点关联函数和相关长度；
+    \item entropy/control cost；
+    \item 与 model-based Doob dynamics 的 KL divergence。
+\end{enumerate}
+这些量比单纯的 episode return 更接近统计物理问题的核心。
+
+\subsection{有限尺寸标度与 iMPS}
+
+第一阶段可以做有限 \(L\)：
+\begin{equation}
+    L=8,12,16,24,\dots
+\end{equation}
+并观察
+\begin{equation}
+    \frac{1}{L}\log\rho_{\beta,L},
+    \qquad
+    \langle J\rangle/L,
+    \qquad
+    \xi_L
+\end{equation}
+的收敛。
+
+第二阶段才考虑 iMPS/iMPO。若模型在 bulk 平移不变，则用一个或两个 site 的 unit cell 表示无限链固定点。
+此时研究对象不再是完整向量 \(u(x,a)\)，而是 bulk tensor fixed point 与局域环境。
+
+\section{与已有工作的关系}
+
+\subsection{与 KCM 大偏差 MPS 工作的关系}
+
+East model、FA model 等 kinetically constrained models 的动力学大偏差已经被 MPS/MPO 方法研究过。
+那些工作通常从固定 Markov generator \(\mathcal L\) 出发，构造 tilted generator \(\mathcal L_s\)，
+再用 MPS 求最大实部本征值：
+\begin{equation}
+    \mathcal L_s r_s=\theta(s)r_s.
+\end{equation}
+这给了我们一个重要参照：tilted stochastic operator 的主本征态确实可以有低 bond dimension 表示。
+
+但本文路线与其不同：我们不只研究固定动力学的 rare trajectory ensemble，而是引入 action，并从
+state-action eigenfunction 构造 policy。
+
+最近 Cea、Cech、Carollo、Lesanovsky 和 Banuls 的 monitored quantum systems 工作
+``Large deviations and conditioned monitored quantum systems: a tensor network approach''
+也采用了同一类思想：不枚举整条轨迹，而是把带有 counting-field 或 conditioning 参数的离散时间
+trajectory transfer matrix 表示为 tensor network，再通过反复作用 transfer operator 和压缩 MPS
+来得到长时间大偏差性质与 conditioned many-body state。本文的小体系实现借鉴的是这个结构层面的思想：
+先把 tilted trajectory ensemble 的一步转移写成 MPO，再把 Perron eigenfunction 写成 MPS。
+
+\subsection{与 tensor-network RL 工作的关系}
+
+已有 tensor-network RL 工作通常直接用 MPS 表示 policy 或 value function，例如
+\begin{equation}
+    V_\theta(x),
+    \qquad
+    \pi_\theta(a\mid x).
+\end{equation}
+本文的不同点是：policy 不是任意参数化的黑箱，而是由熵正则 control-as-inference 推导出的
+Perron eigenfunction 决定：
+\begin{equation}
+    u_\theta(x,a)
+    \longrightarrow
+    \pi_\theta(a\mid x).
+\end{equation}
+这使得大偏差、Doob transform、free energy density 与 RL policy learning 可以放在同一套数学结构中。
+
+\section{建议的研究路线}
+
+\subsection{第一步：小体系精确验证}
+
+选一个小 \(L\) 的最近邻 reward 多 agent 受控链。显式构造 \(K_\beta\)，直接对角化得到
+\begin{equation}
+    \rho_\beta,\quad u_\beta,\quad \pi_\beta^*.
+\end{equation}
+这一步用于确认公式、reward 定义和 policy 重构没有歧义。
+
+\subsection{第二步：MPO-MPS model-based 求解}
+
+把同一个 \(K_\beta\) 写成 MPO，用 MPS 近似 \(u_\beta(x,a)\)。比较：
+\begin{equation}
+    \rho_{\mathrm{MPS}}
+    \quad
+    \text{vs.}
+    \quad
+    \rho_{\mathrm{exact}},
+\end{equation}
+以及由 MPS policy 生成的轨迹 observable。
+
+\subsection{\texorpdfstring{第三步：MPS \(u\)-\(\theta\) learning}{第三步：MPS u-theta learning}}
+
+不再显式构造 \(K_\beta\)，只从 prior dynamics 采样 transition。用 \eqref{eq:u-theta-loss}
+或 \eqref{eq:log-loss} 学习 \(u_\theta\) 与 \(\rho\)。再与 model-based MPS 结果比较。
+
+\subsection{第四步：有限尺寸标度与热力学极限}
+
+增加 \(L\)，研究
+\begin{equation}
+    \frac{1}{L}\log\rho_{\beta,L}
+\end{equation}
+和局域 observable 的收敛。若有限尺寸结果稳定，再转向 iMPS/iMPO。
+
+\section{小体系三步验证结果}
+
+\subsection{验证设置}
+
+作为最小可复现实验，取
+\begin{equation}
+    L=6,\qquad N=3,
+\end{equation}
+即固定粒子数 sector 中共有
+\begin{equation}
+    |\mathcal S_{6,3}|=\binom{6}{3}=20
+\end{equation}
+个构型。action 是所有 bond 与方向：
+\begin{equation}
+    |\mathcal A|=2(L-1)=10.
+\end{equation}
+因此 state-action 空间维数为
+\begin{equation}
+    |\mathcal S_{6,3}||\mathcal A|=200.
+\end{equation}
+参数取
+\begin{equation}
+    \beta=1,\quad
+    V=0.7,\quad
+    \lambda=0.25,\quad
+    c_+=c_-=0.03,\quad
+    q_+=q_-=0.9.
+\end{equation}
+MPS 使用 action-marker 编码，局域维数 \(d_{\mathrm{loc}}=6\)，bond dimension 取 \(\chi=16\)。
+
+\subsection{第一步：精确 state-action Perron 解}
+
+显式构造 \(200\times 200\) 的 tilted matrix \(K_\beta\)，并求解
+\begin{equation}
+    K_\beta^\top u_\beta=\rho_{\beta,L}u_\beta.
+\end{equation}
+这里使用 \(K_\beta^\top\) 是因为矩阵元按
+\begin{equation}
+    K_\beta(n',a'\mid n,a)
+\end{equation}
+存储为 ``row = next, column = current''。Arriojas 公式中的 \(u\) 满足
+\begin{equation}
+    \sum_{n',a'}K_\beta(n',a'\mid n,a)u(n',a')
+    =
+    \rho u(n,a),
+\end{equation}
+所以在普通矩阵乘法中对应 \(K_\beta^\top\) 的右本征向量。
+
+数值结果为
+\begin{equation}
+    \rho_{\beta,L}=0.7752221495,
+    \qquad
+    \frac{\|K_\beta^\top u-\rho u\|}{\|u\|}
+    =
+    2.47\times 10^{-15}.
+\end{equation}
+由
+\begin{equation}
+    \pi^*(a\mid n)
+    =
+    \frac{\pi_0(a\mid n)u(n,a)}
+    {\sum_b\pi_0(b\mid n)u(n,b)}
+\end{equation}
+得到的最优 policy 是非均匀的。例如对构型 \(111000\)，最优动作是向右移动第三个 bond 上的粒子，
+其概率约为 \(0.722\)。
+
+\subsection{第二步：MPO-MPS model-based 求解}
+
+第二步不再把 \(u(n,a)\) 当作表，而是取
+\begin{equation}
+    u_\theta(n,a)=\exp f_\theta(n,a),
+\end{equation}
+其中 \(f_\theta\) 是 action-marker MPS。利用已知的局域 transition gate、最近邻 reward
+diagonal MPO 和 next-action prior，代码中实现了一个有限状态自动机 MPO。它逐站点扫描
+\(y_j=(n_j,m_j)\) 与 \(y'_j=(n'_j,m'_j)\)，MPO virtual index 记录四类信息：
+是否已经看到输入 action marker、是否正处在 active bond 的第二个 site、是否已经生成输出
+action marker，以及最近邻 reward 所需的前一个 \(n'_j\)。在合法 fixed-\(N\) state-action
+sector 上，这个 MPO contraction 得到的矩阵元与直接构造的 dense \(K_\beta\) 逐元素一致：
+\begin{equation}
+    \max_{z,z'}
+    \left|
+        K_{\beta}^{\mathrm{MPO}}(z'\mid z)
+        -
+        K_{\beta}^{\mathrm{dense}}(z'\mid z)
+    \right|
+    =
+    1.39\times 10^{-17},
+\end{equation}
+相对 Frobenius 误差为
+\begin{equation}
+    \frac{
+    \left\|K_{\beta}^{\mathrm{MPO}}-K_{\beta}^{\mathrm{dense}}\right\|_F
+    }{
+    \left\|K_{\beta}^{\mathrm{dense}}\right\|_F
+    }
+    =
+    7.45\times 10^{-17}.
+\end{equation}
+随后用这个显式 MPO 生成的 operator 对每个 state-action 对计算
+\begin{equation}
+    (K_\beta u_\theta)(n,a)
+    =
+    \sum_{n',a'}
+    K_\beta(n',a'\mid n,a)u_\theta(n',a').
+\end{equation}
+训练目标取 log-residual：
+\begin{equation}
+    \mathcal L_{\mathrm{model}}
+    =
+    \frac{1}{|\mathcal S||\mathcal A|}
+    \sum_{n,a}
+    \left[
+        \log (K_\beta u_\theta)(n,a)
+        -
+        \log \rho_\theta
+        -
+        \log u_\theta(n,a)
+    \right]^2.
+\end{equation}
+
+在 \(\chi=16\) 下得到
+\begin{equation}
+    \rho_{\theta}=0.7749303292,
+    \qquad
+    \frac{|\rho_\theta-\rho_{\mathrm{exact}}|}{\rho_{\mathrm{exact}}}
+    =
+    3.76\times 10^{-4}.
+\end{equation}
+本征残差为
+\begin{equation}
+    \frac{\|K_\beta u_\theta-\rho_\theta u_\theta\|}{\|u_\theta\|}
+    =
+    3.64\times 10^{-4},
+\end{equation}
+并且 MPS 学到的 \(u_\theta\) 与精确 \(u\) 的归一化内积为
+\begin{equation}
+    \frac{\langle u_\theta,u_{\mathrm{exact}}\rangle}
+    {\|u_\theta\|\|u_{\mathrm{exact}}\|}
+    =
+    0.9999992.
+\end{equation}
+这说明在这个小体系上，state-action Perron eigenfunction 确实可以被低 bond dimension MPS
+高精度表示。
+
+\subsection{\texorpdfstring{第三步：MPS \(u\)-\(\theta\) learning}{第三步：MPS u-theta learning}}
+
+第三步不显式构造 \(K_\beta\)，只从 prior policy 与环境 transition 中采样
+\begin{equation}
+    (n_t,a_t,r_t,n_{t+1},a_{t+1}).
+\end{equation}
+使用半梯度 TD 形式：
+\begin{equation}
+    \delta_t
+    =
+    e^{\beta r_t}
+    u_\theta(n_{t+1},a_{t+1})
+    -
+    \rho_\theta u_\theta(n_t,a_t),
+\end{equation}
+但对 target 部分停止梯度，以避免把单样本 transition noise 当作确定性 Bellman 残差压掉。
+同时用 batch ratio
+\begin{equation}
+    \rho_{\mathrm{target}}
+    =
+    \left\langle
+        e^{\beta r_t}
+        \frac{u_\theta(n_{t+1},a_{t+1})}
+        {u_\theta(n_t,a_t)}
+    \right\rangle_{\mathrm{batch}}
+\end{equation}
+辅助更新 \(\rho_\theta\)。
+
+在同样的 \(\chi=16\) 下，采样学习得到
+\begin{equation}
+    \rho_{\theta}=0.7539960617,
+    \qquad
+    \frac{|\rho_\theta-\rho_{\mathrm{exact}}|}{\rho_{\mathrm{exact}}}
+    =
+    2.74\times 10^{-2}.
+\end{equation}
+本征残差为
+\begin{equation}
+    \frac{\|K_\beta u_\theta-\rho_\theta u_\theta\|}{\|u_\theta\|}
+    =
+    8.33\times 10^{-2},
+\end{equation}
+而 \(u_\theta\) 与精确 \(u\) 的归一化内积为
+\begin{equation}
+    0.9909.
+\end{equation}
+因此，model-free 的 MPS \(u\)-\(\theta\) learning 在这个小体系上已经学到正确的 eigenfunction
+方向，但 \(\rho\) 和残差精度明显低于 model-based MPO-MPS 求解。这是合理的：第三步只使用采样，
+并且没有显式做 Bellman expectation。
+
+\section{总结}
+
+这条路线的关键不是把 maze 做大，而是把问题换成受控 many-body 随机过程。固定格点随机模型只给出
+大偏差谱问题；加入真实 action 后，才得到真正的 MDP。张量网络表示的核心对象也不是普通表格
+\(Q\)，而是 state-action Perron eigenfunction \(u(n,a)\)。model-based 情况下它由 MPO-MPS
+本征值问题求得；model-free 情况下它由 MPS 版本的 \(u\)-\(\theta\) learning 从样本中学得。
+
+\end{CJK*}
+\end{document}
