@@ -427,6 +427,68 @@ def biorthogonal_observables(chain: ControlledHardCoreChain, mu: np.ndarray) -> 
     }
 
 
+def finite_time_tilted_analysis(
+    chain: ControlledHardCoreChain,
+    K: np.ndarray,
+    rho: float,
+    exact_u: np.ndarray,
+    exact_v: np.ndarray,
+    horizons: list[int],
+) -> list[dict]:
+    """Exact finite-horizon tilted path marginals via forward/backward vectors.
+
+    For a horizon T and initial distribution p0, the unnormalized midpoint
+    marginal is f_t(z) b_{T-t}(z), with f_{t+1}=K f_t and
+    b_{h+1}=K.T b_h.  In the long-time bulk this converges to v(z)u(z),
+    the Doob stationary state-action distribution.
+    """
+    clean_horizons = sorted({int(t) for t in horizons if int(t) > 0})
+    if not clean_horizons:
+        return []
+    max_horizon = max(clean_horizons)
+    dim = chain.dim
+    p0 = np.ones(dim, dtype=np.float64) / dim
+    ones = np.ones(dim, dtype=np.float64)
+    doob_mu = normalized_positive_product(exact_v, exact_u)
+
+    forwards = [p0]
+    for _ in range(max_horizon):
+        forwards.append(K @ forwards[-1])
+    backwards = [ones]
+    for _ in range(max_horizon):
+        backwards.append(K.T @ backwards[-1])
+
+    def marginal_at(T: int, t: int) -> np.ndarray:
+        weights = np.maximum(forwards[t] * backwards[T - t], 0.0)
+        total = weights.sum()
+        return weights / total
+
+    rows = []
+    for T in clean_horizons:
+        mid_t = T // 2
+        mid_mu = marginal_at(T, mid_t)
+        start_mu = marginal_at(T, 0)
+        end_mu = marginal_at(T, T)
+        partition = float(forwards[T].sum())
+        scgf = float(math.log(max(partition, 1e-300)) / T)
+        obs = biorthogonal_observables(chain, mid_mu)
+        rows.append(
+            {
+                "horizon": T,
+                "mid_time": mid_t,
+                "partition": partition,
+                "scgf_estimate": scgf,
+                "scgf_error_vs_log_rho": float(abs(scgf - math.log(rho))),
+                "mid_l1_to_doob_stationary": float(np.abs(mid_mu - doob_mu).sum()),
+                "mid_cosine_to_doob_stationary": vector_cosine(mid_mu, doob_mu),
+                "start_l1_to_doob_stationary": float(np.abs(start_mu - doob_mu).sum()),
+                "end_l1_to_doob_stationary": float(np.abs(end_mu - doob_mu).sum()),
+                "mid_observables": obs,
+            }
+        )
+    return rows
+
+
 def train_model_based(
     chain: ControlledHardCoreChain,
     exact_u: np.ndarray,
@@ -614,6 +676,7 @@ def main() -> None:
     ap.add_argument("--sample-steps", type=int, default=8000)
     ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--lr", type=float, default=2e-3)
+    ap.add_argument("--finite-horizons", type=int, nargs="*", default=[2, 4, 8, 16, 32, 64])
     ap.add_argument("--out", type=Path, default=Path("outputs/controlled_chain_results.json"))
     args = ap.parse_args()
 
@@ -656,6 +719,7 @@ def main() -> None:
         batch_size=args.batch_size,
         lr=args.lr,
     )
+    finite_time = finite_time_tilted_analysis(chain, K, rho, u, v, args.finite_horizons)
 
     result = {
         "params": asdict(params),
@@ -677,6 +741,7 @@ def main() -> None:
         "step2a_explicit_mpo_validation": mpo_validation,
         "step2_mps_model_based": model_metrics,
         "step3_mps_sampled_u_theta": sample_metrics,
+        "step4_finite_time_exact": finite_time,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2, ensure_ascii=False))

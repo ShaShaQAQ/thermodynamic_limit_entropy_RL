@@ -1483,6 +1483,158 @@ model-based MPS 与精确 $u$、$v$ 的 cosine 都接近 $0.999998$，并且 $\m
     ),
     md(
         r"""
+## 10. 有限时间精确 tilted ensemble 与 long-time bulk limit
+
+原始 RL 文章里除了 Perron 长时间极限，也会显式考虑有限步数轨迹。这里我们加入同样的检查：对有限 horizon
+$T$，不直接跳到主本征矢，而是精确计算 tilted path ensemble 的 forward/backward 权重。
+
+设初始分布为均匀 $p_0(z)$，终端边界为全 1 向量。有限时间分区函数是
+
+$$
+Z_T
+=
+\mathbf{1}^\top K_\beta^T p_0.
+$$
+
+forward vector 和 backward vector 分别为
+
+$$
+f_t = K_\beta^t p_0,
+\qquad
+b_{T-t} = (K_\beta^\top)^{T-t}\mathbf{1}.
+$$
+
+于是第 $t$ 层的 tilted path marginal 是
+
+$$
+\mu_{T,t}(z)
+=
+\frac{f_t(z)b_{T-t}(z)}{\sum_y f_t(y)b_{T-t}(y)}.
+$$
+
+Perron-Frobenius 告诉我们：当 $T\to\infty$ 且 $t$ 远离左右边界时，
+
+$$
+\mu_{T,t}(z)
+\longrightarrow
+\mu^*(z)
+=
+\frac{v(z)u(z)}{\sum_y v(y)u(y)}.
+$$
+
+这就是为什么 bulk 内会到达 Doob 稳态，而 finite-time path 的两端仍然带有边界效应。
+
+### 10.1 这一步是否也可以张量网络化？
+
+可以。有限时间计算不是必须用 dense matrix。张量网络形式是一个二维 strip：横向是空间 MPS/MPO 指标，纵向是时间层。每一层是同一个 tilted MPO $K_\beta$。
+
+有限时间的 tensor workflow 是：
+
+1. 把初始边界 $p_0(y)$ 表示成 MPS；
+2. 反复作用 tilted MPO：
+
+$$
+|f_{t+1}\rangle = K_\beta |f_t\rangle;
+$$
+
+3. 每一步做 MPS compression，避免 bond dimension 按 $D_{\rm MPO}^t$ 爆炸；
+4. 从终端边界 $\langle \mathbf{1}|$ 反向作用 MPO，得到 backward MPS $b_{T-t}$；
+5. 在中间时间 slice contraction：
+
+$$
+\mu_{T,t}(y)\propto f_t(y)b_{T-t}(y).
+$$
+
+所以有限时间版本也有自然的 TN 表示。当前小体系代码用 dense matrix 只是为了精确 benchmark；真正大体系应改成 MPO-MPS time evolution + compression，类似 transfer-matrix TEBD / finite-time Feynman-Kac contraction。
+"""
+    ),
+    code(
+        r"""
+finite_rows = result.get("step4_finite_time_exact", [])
+print(f"{'T':>5} {'t_mid':>6} {'SCGF':>12} {'|SCGF-logrho|':>15} {'mid L1':>12} {'mid cos':>12} {'start L1':>12} {'end L1':>12}")
+for row in finite_rows:
+    print(
+        f"{row['horizon']:5d} {row['mid_time']:6d} "
+        f"{row['scgf_estimate']:12.6f} {row['scgf_error_vs_log_rho']:15.3e} "
+        f"{row['mid_l1_to_doob_stationary']:12.3e} {row['mid_cosine_to_doob_stationary']:12.9f} "
+        f"{row['start_l1_to_doob_stationary']:12.3e} {row['end_l1_to_doob_stationary']:12.3e}"
+    )
+"""
+    ),
+    code(
+        r"""
+Ts = np.array([row["horizon"] for row in finite_rows], dtype=float)
+scgf_err = np.array([row["scgf_error_vs_log_rho"] for row in finite_rows])
+mid_l1 = np.array([row["mid_l1_to_doob_stationary"] for row in finite_rows])
+mid_cos = np.array([row["mid_cosine_to_doob_stationary"] for row in finite_rows])
+start_l1 = np.array([row["start_l1_to_doob_stationary"] for row in finite_rows])
+end_l1 = np.array([row["end_l1_to_doob_stationary"] for row in finite_rows])
+nn_mid = np.array([row["mid_observables"]["nn_occupancy_density"] for row in finite_rows])
+nn_exact = result["step1_exact"]["doob_stationary_observables"]["nn_occupancy_density"]
+
+fig, axes = plt.subplots(1, 4, figsize=(15.5, 3.4))
+
+axes[0].plot(Ts, scgf_err, marker="o")
+axes[0].set_xscale("log", base=2)
+axes[0].set_yscale("log")
+axes[0].set_xlabel("horizon T")
+axes[0].set_ylabel(r"$|(1/T)\log Z_T-\log\rho|$")
+axes[0].set_title("Figure 7a. Free-energy convergence")
+
+axes[1].plot(Ts, mid_l1, marker="o", label="mid")
+axes[1].plot(Ts, start_l1, marker="s", label="start boundary")
+axes[1].plot(Ts, end_l1, marker="^", label="end boundary")
+axes[1].set_xscale("log", base=2)
+axes[1].set_yscale("log")
+axes[1].set_xlabel("horizon T")
+axes[1].set_ylabel(r"$L^1$ distance to $\mu^*$")
+axes[1].set_title("Figure 7b. Bulk vs boundary")
+axes[1].legend(fontsize=8)
+
+axes[2].plot(Ts, mid_cos, marker="o", color="tab:purple")
+axes[2].set_xscale("log", base=2)
+axes[2].set_ylim(0.74, 1.005)
+axes[2].set_xlabel("horizon T")
+axes[2].set_ylabel(r"cosine$(\mu_{T,T/2},\mu^*)$")
+axes[2].set_title("Figure 7c. Midpoint direction")
+
+axes[3].plot(Ts, nn_mid, marker="o", label="finite midpoint")
+axes[3].axhline(nn_exact, ls="--", color="k", label="Doob stationary")
+axes[3].set_xscale("log", base=2)
+axes[3].set_xlabel("horizon T")
+axes[3].set_ylabel("NN occupancy density")
+axes[3].set_title("Figure 7d. Observable convergence")
+axes[3].legend(fontsize=8)
+
+plt.tight_layout()
+plt.show()
+"""
+    ),
+    md(
+        r"""
+**图 7 说明。**
+
+**(a) Free-energy convergence.**  
+有限时间估计 $(1/T)\log Z_T$ 逐渐接近 $\log\rho$。这里收敛大致呈 $1/T$ 边界修正，因为 $Z_T\sim C\rho^T$，所以
+
+$$
+\frac{1}{T}\log Z_T
+=
+\log\rho + \frac{1}{T}\log C + o(1/T).
+$$
+
+**(b) Bulk vs boundary.**  
+中点分布 $\mu_{T,T/2}$ 很快接近 Doob 稳态 $\mu^*\propto vu$；但起点和终点的 marginal 保持明显偏离。这正是有限时间 tilted path ensemble 的边界效应。
+
+**(c) Midpoint direction.**  
+中点分布与 $\mu^*$ 的 cosine 从 $T=2$ 的约 $0.77$ 增长到 $T=128$ 时几乎为 1。
+
+**(d) Observable convergence.**  
+中点最近邻占据密度收敛到 Doob 稳态值。这比只看分布距离更物理：bulk 内 observable 已经进入 conditioned steady state。
+"""
+    ),
+    md(
+        r"""
 ## 10. 最终结论
 
 这个 notebook 验证了三点：
@@ -1491,7 +1643,8 @@ model-based MPS 与精确 $u$、$v$ 的 cosine 都接近 $0.999998$，并且 $\m
 2. 对小体系，显式对角化给出非平凡最优 policy，说明这个问题确实是控制问题，不是普通随机游走。
 3. $K_\beta$ 可以用有限状态自动机 MPO 在合法 sector 上逐元素复现；右矢 $u(n,a)$ 与左矢 $v(n,a)$ 都可以用 action-marker MPS 表示。
 4. model-based 双 MPS 同时给出控制 policy 所需的 $u$ 和 Doob 稳态所需的 $\mu^*\propto vu$。
-5. sampled MPS $u$-$\theta$ learning 也能学到正确方向，但目前只学习右矢，精度低于 model-based，这正是采样学习与显式 Bellman expectation 的差别。
+5. finite-time exact forward/backward 计算显示，有限 horizon 的 bulk midpoint marginal 会收敛到 $\mu^*\propto vu$，而左右边界保留有限时间效应。
+6. sampled MPS $u$-$\theta$ learning 也能学到正确方向，但目前只学习右矢，精度低于 model-based，这正是采样学习与显式 Bellman expectation 的差别。
 
 下一步如果要推进到热力学极限，应优先做有限尺寸序列：
 

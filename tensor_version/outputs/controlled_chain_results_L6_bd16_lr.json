@@ -102,5 +102,112 @@
     "rho_rel_error": 0.023002002583241185,
     "relative_residual": 0.07789245894836658,
     "u_cosine_with_exact": 0.9909718939452034
-  }
+  },
+  "step4_finite_time_exact": [
+    {
+      "horizon": 2,
+      "mid_time": 1,
+      "partition": 0.33112414207967766,
+      "scgf_estimate": -0.5526309611595552,
+      "scgf_error_vs_log_rho": 0.2980253149743072,
+      "mid_l1_to_doob_stationary": 0.9965671345122928,
+      "mid_cosine_to_doob_stationary": 0.7662286677203569,
+      "start_l1_to_doob_stationary": 1.0726126403352503,
+      "end_l1_to_doob_stationary": 1.0421373579377369,
+      "mid_observables": {
+        "nn_occupancy_density": 0.10746418224816608,
+        "prior_expected_current_density": 0.013706885888936007
+      }
+    },
+    {
+      "horizon": 4,
+      "mid_time": 2,
+      "partition": 0.15975677999019555,
+      "scgf_estimate": -0.45852568634297924,
+      "scgf_error_vs_log_rho": 0.20392004015773119,
+      "mid_l1_to_doob_stationary": 0.6832957238652307,
+      "mid_cosine_to_doob_stationary": 0.8909342505214842,
+      "start_l1_to_doob_stationary": 0.8828416659268792,
+      "end_l1_to_doob_stationary": 0.8519192082309862,
+      "mid_observables": {
+        "nn_occupancy_density": 0.05955698377583709,
+        "prior_expected_current_density": 0.012426948995252752
+      }
+    },
+    {
+      "horizon": 8,
+      "mid_time": 4,
+      "partition": 0.05171900834013982,
+      "scgf_estimate": -0.37024123736085207,
+      "scgf_error_vs_log_rho": 0.11563559117560401,
+      "mid_l1_to_doob_stationary": 0.3331073055846804,
+      "mid_cosine_to_doob_stationary": 0.970138124879793,
+      "start_l1_to_doob_stationary": 0.7597468164720609,
+      "end_l1_to_doob_stationary": 0.7168327651582385,
+      "mid_observables": {
+        "nn_occupancy_density": 0.027466234244193526,
+        "prior_expected_current_density": 0.009146348236037055
+      }
+    },
+    {
+      "horizon": 16,
+      "mid_time": 8,
+      "partition": 0.006664160609373321,
+      "scgf_estimate": -0.31318820458510027,
+      "scgf_error_vs_log_rho": 0.058582558399852214,
+      "mid_l1_to_doob_stationary": 0.09319925081932645,
+      "mid_cosine_to_doob_stationary": 0.9972000832317411,
+      "start_l1_to_doob_stationary": 0.7518514619618379,
+      "end_l1_to_doob_stationary": 0.7050063080755287,
+      "mid_observables": {
+        "nn_occupancy_density": 0.017224792686933468,
+        "prior_expected_current_density": 0.004699032570840598
+      }
+    },
+    {
+      "horizon": 32,
+      "mid_time": 16,
+      "partition": 0.00011396459142031738,
+      "scgf_estimate": -0.28373821123101883,
+      "scgf_error_vs_log_rho": 0.029132565045770775,
+      "mid_l1_to_doob_stationary": 0.010861826485492882,
+      "mid_cosine_to_doob_stationary": 0.9999164093091163,
+      "start_l1_to_doob_stationary": 0.7589326807375444,
+      "end_l1_to_doob_stationary": 0.710833288637599,
+      "mid_observables": {
+        "nn_occupancy_density": 0.015519076168095832,
+        "prior_expected_current_density": 0.0011549043589582399
+      }
+    },
+    {
+      "horizon": 64,
+      "mid_time": 32,
+      "partition": 3.300749634819568e-08,
+      "scgf_estimate": -0.2691645490501686,
+      "scgf_error_vs_log_rho": 0.014558902864920564,
+      "mid_l1_to_doob_stationary": 0.00041823639776223406,
+      "mid_cosine_to_doob_stationary": 0.9999997221990016,
+      "start_l1_to_doob_stationary": 0.7595424137250074,
+      "end_l1_to_doob_stationary": 0.7113642125337364,
+      "mid_observables": {
+        "nn_occupancy_density": 0.015418070677247384,
+        "prior_expected_current_density": 6.900225742319601e-05
+      }
+    },
+    {
+      "horizon": 128,
+      "mid_time": 64,
+      "partition": 2.7662307329572023e-15,
+      "scgf_estimate": -0.26188508396556365,
+      "scgf_error_vs_log_rho": 0.00727943778031559,
+      "mid_l1_to_doob_stationary": 1.4997166876771163e-06,
+      "mid_cosine_to_doob_stationary": 0.9999999999964151,
+      "start_l1_to_doob_stationary": 0.7595446603956268,
+      "end_l1_to_doob_stationary": 0.7113661750730473,
+      "mid_observables": {
+        "nn_occupancy_density": 0.015417588840854595,
+        "prior_expected_current_density": 2.478377579291212e-07
+      }
+    }
+  ]
 }
