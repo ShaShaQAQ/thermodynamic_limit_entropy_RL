@@ -143,24 +143,33 @@ def draw_mpo_diagram(L=6, active_bond=2):
     plt.show()
 
 def draw_factor_workflow():
-    fig, ax = plt.subplots(figsize=(10, 2.5))
-    labels = [
-        r"$u_\theta(n',a')$",
-        r"$\Pi_0$",
-        r"$\mathcal{D}_\Phi$",
-        r"$\widehat{\mathcal{T}}$",
-        r"$(K_\beta u_\theta)(n,a)$",
-    ]
-    xs = np.arange(len(labels)) * 1.8
+    fig, ax = plt.subplots(figsize=(11, 3.6))
+    xs = np.arange(5) * 1.85
     colors = ["#dcfce7", "#e0e7ff", "#fef9c3", "#fee2e2", "#dcfce7"]
-    for x, lab, col in zip(xs, labels, colors):
-        draw_tensor_box(ax, (x, 0), lab, width=1.15, height=0.55, color=col)
-    for x0, x1 in zip(xs[:-1], xs[1:]):
-        ax.annotate("", xy=(x1-0.65, 0), xytext=(x0+0.65, 0), arrowprops=dict(arrowstyle="->", lw=1.4))
-    ax.text(xs.mean(), 0.82, r"Factorized application of $K_\beta=\Pi_0\mathcal{D}_\Phi\widehat{\mathcal{T}}$", ha="center", fontsize=12)
-    ax.text(xs[2], -0.78, "right-to-left reading: choose next action, add reward, apply controlled move", ha="center", fontsize=9, color="#374151")
+    right_labels = [
+        r"$u_\theta(y')$",
+        r"$\Pi_0(a'|n')$",
+        r"$\mathcal{D}_{r}(y',y)$",
+        r"$\widehat{\mathcal{T}}(n'|n,a)$",
+        r"$(K_\beta^\top u_\theta)(y)$",
+    ]
+    left_labels = [
+        r"$v_\phi(y)$",
+        r"$\widehat{\mathcal{T}}(n'|n,a)$",
+        r"$\mathcal{D}_{r}(y',y)$",
+        r"$\Pi_0(a'|n')$",
+        r"$(K_\beta v_\phi)(y')$",
+    ]
+    for y0, labels, title in [(0.55, right_labels, "right equation: sum over future $y'$"), (-0.55, left_labels, "left equation: sum over past $y$")]:
+        for x, lab, col in zip(xs, labels, colors):
+            draw_tensor_box(ax, (x, y0), lab, width=1.35, height=0.48, color=col)
+        for x0, x1 in zip(xs[:-1], xs[1:]):
+            ax.annotate("", xy=(x1-0.78, y0), xytext=(x0+0.78, y0), arrowprops=dict(arrowstyle="->", lw=1.25))
+        ax.text(xs.mean(), y0 + 0.43, title, ha="center", fontsize=10, color="#374151")
+    ax.text(xs.mean(), 1.35, r"Two MPO-MPS contractions from the same tilted kernel $K_\beta(y'|y)$", ha="center", fontsize=12)
+    ax.text(xs.mean(), -1.25, r"After both fixed points are learned: $\mu^*(y)\propto v_\phi(y)u_\theta(y)$", ha="center", fontsize=10, color="#6d28d9")
     ax.set_xlim(-0.9, xs[-1]+0.9)
-    ax.set_ylim(-1.1, 1.1)
+    ax.set_ylim(-1.55, 1.6)
     ax.axis("off")
     plt.show()
 
@@ -568,7 +577,7 @@ draw_policy_entropy(chain, pi_exact)
 这一节把所有 tensor 结构集中在一起。目标不是只画示意图，而是明确回答：
 
 1. 一个 state-action pair $(n,a)$ 如何变成一条 MPS 输入链；
-2. Perron eigenfunction $u(n,a)$ 如何写成 MPS；
+2. 左右 Perron eigenfunctions $u(n,a)$ 与 $v(n,a)$ 如何写成两套 MPS；
 3. tilted operator $K_\beta(n',a'\mid n,a)$ 如何写成 MPO；
 4. 代码里的每一步到底对应哪个张量网络对象。
 
@@ -658,7 +667,7 @@ print("encoded y-chain:", chain.marker_features(state_id, action_id))
     ),
     md(
         r"""
-### 5.2 用 MPS 表示 Perron eigenfunction
+### 5.2 用 MPS 表示左右 Perron eigenfunction
 
 普通 MPS 适合表示一个构型函数
 
@@ -666,13 +675,16 @@ $$
 F(n_1,\dots,n_L).
 $$
 
-但这里 Perron eigenfunction 是 state-action 函数
+但这里 Perron eigenfunction 是 state-action 函数。对于非厄米 tilted operator，需要区分右 continuation eigenfunction 和左 Perron weight：
 
 $$
-u(n,a),\qquad a=(i,\sigma).
+u(n,a),
+\qquad
+v(n,a),
+\qquad a=(i,\sigma).
 $$
 
-所以 MPS 的输入不是单独的 $n_j$，而是上面定义的 $y_j=(n_j,m_j)$。我们先用 MPS 表示一个无约束实函数
+二者使用同一个局域输入链 $y_j=(n_j,m_j)$，但用两套独立 MPS 参数表示。右矢先用 MPS 表示一个无约束实函数
 $f_\theta(n,a)$：
 
 $$
@@ -691,10 +703,30 @@ $$
 u_\theta(n,a)=\exp f_\theta(n,a).
 $$
 
+左矢完全平行地表示为
+
+$$
+g_\phi(n,a)
+=
+\sum_{\alpha_1,\dots,\alpha_{L-1}}
+B^{[1]}_{1,y_1,\alpha_1}
+B^{[2]}_{\alpha_1,y_2,\alpha_2}
+\cdots
+B^{[L]}_{\alpha_{L-1},y_L,1},
+$$
+
+并令
+
+$$
+v_\phi(n,a)=\exp g_\phi(n,a).
+$$
+
 这样做有两个好处：
 
-- $u_\theta(n,a)$ 自动为正，符合 Perron-Frobenius 本征函数的结构。
-- MPS 只需要表示 $f_\theta$，数值上比直接强制 $u_\theta>0$ 更稳定。
+- $u_\theta(n,a)$ 与 $v_\phi(n,a)$ 自动为正，符合 Perron-Frobenius 左右本征函数的结构。
+- MPS 只需要表示 $f_\theta$ 和 $g_\phi$，数值上比直接强制正函数更稳定。
+- $u$ 的整体尺度不影响 Doob policy；$v$ 的整体尺度也只影响 $v u$ 的归一化。因此代码用 `positive_u_from_f` 对每个 MPS 输出减均值作为数值 gauge。
+- 学到 $v$ 后，可以直接构造 Doob 稳态分布 $\mu^*(n,a)\propto v_\phi(n,a)u_\theta(n,a)$，这一步是单独学习 $u$ 时没有的。
 """
     ),
     code(
@@ -705,23 +737,28 @@ draw_mps_diagram(L=6, active_bond=2, direction="R")
     md(
         r"""
 **图 3 说明。**  
-这张图画的是 $f_\theta(n,a)$ 的 MPS。每个蓝色方块是一个 MPS 张量 $A^{[j]}$；横线是虚拟指标
-$\alpha_j$；竖线是物理输入 $y_j=(n_j,m_j)$。橙色标出的 $m_j=+$ 是 action marker，表示当前 action
-作用在对应 bond 上并尝试右移。
+这张图画的是右矢 $f_\theta(n,a)$ 的 MPS。左矢 $g_\phi(n,a)$ 使用完全相同的 physical index
+$y_j=(n_j,m_j)$ 和相同的 open-boundary MPS 结构，只是参数张量从 $A^{[j]}$ 换成另一套独立的
+$B^{[j]}$。橙色标出的 $m_j=+$ 是 action marker，表示当前 action 作用在对应 bond 上并尝试右移。
 """
     ),
     code(
         r"""
 from controlled_chain_experiment import MPSFunction, positive_u_from_f
 
-model_demo = MPSFunction(L=6, local_dim=6, bond_dim=4)
+u_model_demo = MPSFunction(L=6, local_dim=6, bond_dim=4)
+v_model_demo = MPSFunction(L=6, local_dim=6, bond_dim=4)
 features_demo = chain.all_feature_tensor()[:3]
-f_demo = model_demo(features_demo)
+f_demo = u_model_demo(features_demo)
+g_demo = v_model_demo(features_demo)
 u_demo = positive_u_from_f(f_demo)
+v_demo = positive_u_from_f(g_demo)
 
 print("features shape:", tuple(features_demo.shape))
 print("f_theta shape:", tuple(f_demo.shape))
+print("g_phi shape:", tuple(g_demo.shape))
 print("u_theta is positive:", bool((u_demo > 0).all()))
+print("v_phi is positive:", bool((v_demo > 0).all()))
 print("first three feature rows:")
 print(features_demo.numpy())
 """
@@ -853,31 +890,50 @@ draw_factor_workflow()
     md(
         r"""
 **图 5 说明。**  
-图 5 展示的是 $K_\beta u_\theta$ 的概念分解。右侧输入是 $u_\theta(n',a')$。先对下一步 action $a'$ 做 prior
-平均，再乘移动后构型的 reward 权重，最后根据当前 action $a$ 的 marker 执行受控移动。实际代码中的
-`ExplicitTiltedMPO` 把这些局域规则合并进一个自动机 MPO。
+图 5 展示的是同一个 tilted kernel 的两种 contraction。右矢方程把 $u_\theta(y')$ 放在输出端并对未来
+$y'$ 求和，得到 $(K_\beta^\top u_\theta)(y)$；左矢方程把 $v_\phi(y)$ 放在输入端并对过去 $y$ 求和，得到
+$(K_\beta v_\phi)(y')$。实际代码中的 `ExplicitTiltedMPO` 把 prior、reward 和受控移动规则合并进一个自动机 MPO；
+`train_model_based` 用同一个 restricted MPO matrix 同时计算这两条 contraction。
 
 ### 5.5 MPO-MPS contraction 的数学 workflow
 
-有了 MPS 和 MPO，model-based Perron 方程就是
+有了 MPS 和 MPO，model-based Perron 方程分成右、左两条。右矢 $u$ 是 future continuation weight：
 
 $$
 \sum_{y'}
 K_\beta^{\rm MPO}(y'\mid y)
 u_\theta^{\rm MPS}(y')
 =
-\rho_\theta u_\theta^{\rm MPS}(y).
+\rho_{u,\theta} u_\theta^{\rm MPS}(y).
+$$
+
+左矢 $v$ 是 past / stationary weight：
+
+$$
+\sum_y
+K_\beta^{\rm MPO}(y'\mid y)
+v_\phi^{\rm MPS}(y)
+=
+\rho_{v,\phi} v_\phi^{\rm MPS}(y').
+$$
+
+在精确 Perron 极限下，二者的本征值应相同：
+
+$$
+\rho_{u,\theta}\simeq \rho_{v,\phi}\simeq \rho_\beta.
 $$
 
 如果做真正的大体系算法，标准 tensor-network workflow 是：
 
-1. 用 MPO 作用在 MPS 上，得到一个 bond dimension 约为 $D_{\rm MPO}\chi$ 的新 MPS；
-2. 对新 MPS 做压缩或 variational fit，把 bond dimension 截回 $\chi$；
-3. 用 power iteration、Arnoldi-DMRG、VUMPS-like fixed point 或 residual minimization 求主本征态。
+1. 右矢更新：用 MPO 的输出腿 contraction 作用在 $u_\theta(y')$ 上，得到 $K_\beta^\top u_\theta$；
+2. 左矢更新：用同一个 MPO 的输入腿 contraction 作用在 $v_\phi(y)$ 上，得到 $K_\beta v_\phi$；
+3. 对两个新 MPS 分别做压缩或 variational fit，把 bond dimension 截回 $\chi$；
+4. 用 power iteration、Arnoldi-DMRG、VUMPS-like fixed point 或 residual minimization 同时求左右 fixed points；
+5. 用 $\mu^*(y)\propto v_\phi(y)u_\theta(y)$ 计算 conditioned steady-state observables。
 
 当前小体系代码为了便于严格验证，先把显式 MPO contraction 限制到合法 fixed-$N$ state-action sector 上，生成
-$200\times200$ 的 restricted matrix；随后用它计算 $K_\beta u_\theta$。这仍然不是无限链算法，但已经不是
-`apply_K_values` 的手写 Bellman 规则，而是显式 MPO entry contraction。
+$200\times200$ 的 restricted matrix；随后用 `K_operator.T @ u` 计算右矢方程，用 `K_operator @ v` 计算左矢方程。
+这仍然不是无限链算法，但已经不是 `apply_K_values` 的手写 Bellman 规则，而是显式 MPO entry contraction 后的 restricted-sector 验证。
 """
     ),
     code(
@@ -924,20 +980,35 @@ $$
 
 它在代码中由 `marker_features` 生成。
 
-**MPS eigenfunction ansatz.**  
-MPS 表示
+**Right-MPS eigenfunction ansatz.**  
+第一套 MPS 表示右 Perron 矢的 log-amplitude
 
 $$
 f_\theta(n,a),
 $$
 
-对应 `MPSFunction.forward`。正 Perron 函数取为
+对应 `u_model = MPSFunction(...)` 和 `u_model.forward`。正右 Perron 函数取为
 
 $$
 u_\theta(n,a)=\exp f_\theta(n,a),
 $$
 
 对应 `positive_u_from_f`。
+
+**Left-MPS eigenfunction ansatz.**  
+第二套 MPS 表示左 Perron 矢的 log-amplitude
+
+$$
+g_\phi(n,a),
+$$
+
+对应 `v_model = MPSFunction(...)` 和 `v_model.forward`。正左 Perron weight 取为
+
+$$
+v_\phi(n,a)=\exp g_\phi(n,a).
+$$
+
+代码复用同一个 `MPSFunction` 类；区别只在于 `u_model` 和 `v_model` 是两套独立参数。
 
 **Local transition gate.**  
 active bond 的 transition kernel 是
@@ -975,23 +1046,56 @@ $$
 
 它由 `ExplicitTiltedMPO.build_restricted_matrix` 在合法 fixed-$N$ sector 上逐元素 contraction 得到。
 
-**Model-based solve.**  
-训练目标对应
+**Model-based right solve.**  
+右矢训练目标对应
 
 $$
-K_\beta u_\theta \approx \rho_\theta u_\theta.
+K_\beta^\top u_\theta \approx \rho_{u,\theta} u_\theta.
 $$
 
-它在 `train_model_based` 中实现。
+代码中是 `Ku = K_operator.T @ u.reshape(-1)`，然后最小化右 log-residual。
+
+**Model-based left solve.**  
+左矢训练目标对应
+
+$$
+K_\beta v_\phi \approx \rho_{v,\phi} v_\phi.
+$$
+
+代码中是 `Kv = K_operator @ v.reshape(-1)`，然后最小化左 log-residual。`rho_right` 和 `rho_left` 分开训练，最后检查
+
+$$
+\frac{\lvert\rho_{u,\theta}-\rho_{v,\phi}\rvert}
+{(\rho_{u,\theta}+\rho_{v,\phi})/2}
+$$
+
+是否足够小。
+
+**Doob stationary measure.**  
+左右矢都得到后，conditioned process 的 state-action 稳态分布是
+
+$$
+\mu_{\theta,\phi}^*(y)
+=
+\frac{v_\phi(y)u_\theta(y)}{\sum_{\tilde y}v_\phi(\tilde y)u_\theta(\tilde y)}.
+$$
+
+代码中由 `normalized_positive_product(v_np, u_np)` 得到；随后 `biorthogonal_observables` 用这个分布计算最近邻占据密度和电流密度等观测量。
 
 这一节的关键结论是：MPS 和 MPO 的 physical index 是同一个 $y_j=(n_j,m_j)$。MPS 给出
-$u_\theta(y)$，MPO 给出 $K_\beta(y'\mid y)$，二者通过
+$u_\theta(y)$ 与 $v_\phi(y)$，MPO 给出 $K_\beta(y'\mid y)$，二者通过
 
 $$
-(K_\beta u_\theta)(y)=\sum_{y'}K_\beta(y'\mid y)u_\theta(y')
+(K_\beta^\top u_\theta)(y)=\sum_{y'}K_\beta(y'\mid y)u_\theta(y')
 $$
 
-连接到 Perron 方程。
+以及
+
+$$
+(K_\beta v_\phi)(y')=\sum_y K_\beta(y'\mid y)v_\phi(y)
+$$
+
+连接到左右 Perron 方程。
 """
     ),
     md(
@@ -1122,11 +1226,11 @@ $$
 本 notebook 的 exact / model-based MPS 做的是同一个 Perron 问题。区别只是：
 
 - 原文显式存储 tabular $u(s,a)$；
-- 这里用 action-marker MPS 表示 $u_\theta(n,a)$；
+- 这里用 action-marker MPS 表示 $u_\theta(n,a)$，并额外用第二套 MPS 表示左矢 $v_\phi(n,a)$；
 - 原文显式构造 sparse matrix；
 - 这里用 `ExplicitTiltedMPO` 的有限状态自动机 contraction 实现同一个 tilted operator。
 
-所以，**model-based MPS 是合理的**：它就是把原文的 tabular Perron eigenvector 换成 MPS ansatz。
+所以，**model-based MPS 是合理的**：它把原文的 tabular Perron eigenvector 换成 MPS ansatz；新版进一步把原文中用于归一化、稳态权重和 bulk observable 的左 Perron vector 也显式 MPS 化。
 
 ### 7.2 Model-free $u$-$\theta$ learning
 
@@ -1168,7 +1272,7 @@ $$
 
 训练时对 target 端停止梯度，并用 batch ratio 辅助更新 $\rho_\theta$。这不是原文算法的严格等价形式，而是它的函数逼近版本。
 
-因此，**sampled MPS $u$-$\theta$ learning 目前应理解为 prototype**。它能学到正确方向，但稳定性比 model-based 差。更严谨的下一版需要 target network、replay buffer、明确的 gauge normalization，甚至同时学习右本征向量 $v$。
+因此，**sampled MPS $u$-$\theta$ learning 目前应理解为 prototype**。它能学到正确方向，但稳定性比 model-based 差。更严谨的下一版需要 target network、replay buffer、明确的 gauge normalization；若要从采样中直接估计 Doob 稳态，还需要采样版左矢/occupancy-ratio 学习，而不仅是右矢 TD。
 """
     ),
     md(
