@@ -1,0 +1,106 @@
+{
+  "params": {
+    "L": 6,
+    "N": 3,
+    "beta": 1.0,
+    "V": 0.7,
+    "lam": 0.25,
+    "c_plus": 0.03,
+    "c_minus": 0.03,
+    "q_plus": 0.9,
+    "q_minus": 0.9,
+    "seed": 7
+  },
+  "sizes": {
+    "num_states": 20,
+    "num_actions": 10,
+    "state_action_dim": 200,
+    "mps_bond_dim": 16
+  },
+  "step1_exact": {
+    "rho": 0.7752221495016305,
+    "right_relative_residual": 1.7824759340985734e-15,
+    "left_relative_residual": 1.7792113524904427e-15,
+    "left_right_rho_mismatch": 1.432135324485877e-15,
+    "biorthogonal_overlap": 0.7630491355188901,
+    "doob_stationary_observables": {
+      "nn_occupancy_density": 0.015417588829532253,
+      "prior_expected_current_density": 1.7257197650807309e-16
+    },
+    "policy_examples": [
+      {
+        "state": "111000",
+        "best_action": [
+          2,
+          1
+        ],
+        "best_prob": 0.7221725022204614,
+        "nn_occupancy": 2
+      },
+      {
+        "state": "110100",
+        "best_action": [
+          3,
+          1
+        ],
+        "best_prob": 0.3066838676883116,
+        "nn_occupancy": 1
+      },
+      {
+        "state": "110010",
+        "best_action": [
+          1,
+          1
+        ],
+        "best_prob": 0.43470822026137956,
+        "nn_occupancy": 1
+      },
+      {
+        "state": "110001",
+        "best_action": [
+          1,
+          1
+        ],
+        "best_prob": 0.46729816921101686,
+        "nn_occupancy": 1
+      },
+      {
+        "state": "101100",
+        "best_action": [
+          3,
+          1
+        ],
+        "best_prob": 0.5347947527830945,
+        "nn_occupancy": 1
+      }
+    ]
+  },
+  "step2a_explicit_mpo_validation": {
+    "max_abs_entry_error": 1.3877787807814457e-17,
+    "frobenius_relative_error": 7.454876021851627e-17,
+    "construction": "finite-automaton MPO entry contraction on the legal fixed-N state-action sector"
+  },
+  "step2_mps_model_based": {
+    "rho": 0.7747941662410007,
+    "rho_right": 0.7748279380304056,
+    "rho_left": 0.774760394451596,
+    "rho_left_right_rel_mismatch": 8.717615820130037e-05,
+    "rho_rel_error": 0.0005520782151347193,
+    "right_relative_residual": 0.0005146676422552093,
+    "left_relative_residual": 0.0005517748107932927,
+    "u_cosine_with_exact": 0.9999988036189283,
+    "v_cosine_with_exact": 0.9999980117566409,
+    "doob_stationary_l1_error": 0.002391054544558987,
+    "doob_stationary_cosine_with_exact": 0.9999983075583538,
+    "doob_stationary_observables": {
+      "nn_occupancy_density": 0.015469020649771311,
+      "prior_expected_current_density": 4.279014073319565e-05
+    }
+  },
+  "step3_mps_sampled_u_theta": {
+    "rho": 0.7573904876162082,
+    "rho_rel_error": 0.023002002583241185,
+    "relative_residual": 0.07789245894836658,
+    "u_cosine_with_exact": 0.9909718939452034
+  }
+}

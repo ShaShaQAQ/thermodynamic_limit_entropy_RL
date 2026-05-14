@@ -350,22 +350,41 @@ def positive_u_from_f(f: torch.Tensor) -> torch.Tensor:
     return torch.exp(torch.clamp(f, min=-30.0, max=30.0))
 
 
-def dominant_exact_u(K: np.ndarray) -> tuple[float, np.ndarray, float]:
-    """Dominant eigenfunction u for sum_{z'} K(z'|z) u(z') = rho u(z).
+def _positive_l2_vector(vec: np.ndarray) -> np.ndarray:
+    out = vec.real.copy()
+    if out.sum() < 0:
+        out *= -1
+    out = np.maximum(out, 1e-14)
+    out /= np.linalg.norm(out)
+    return out
 
-    With the dense matrix convention K[row=z', col=z] this is the dominant
-    right eigenvector of K.T, not K.
+
+def dominant_exact_pair(K: np.ndarray) -> tuple[float, np.ndarray, np.ndarray, float, float, float]:
+    """Dominant right/left Perron pair in the code's matrix convention.
+
+    The dense matrix convention is K[row=z', col=z] = K(z'|z).  The Doob
+    continuation eigenfunction u obeys K.T @ u = rho * u, while the dual
+    Perron weight v obeys K @ v = rho * v.  Their product v*u gives the
+    stationary state-action distribution of the Doob-transformed chain.
     """
-    vals, vecs = scipy.linalg.eig(K.T)
-    idx = int(np.argmax(vals.real))
-    rho = float(vals[idx].real)
-    u = vecs[:, idx].real
-    if u.sum() < 0:
-        u *= -1
-    u = np.maximum(u, 1e-14)
-    u /= np.linalg.norm(u)
-    rel_res = np.linalg.norm(K.T @ u - rho * u) / np.linalg.norm(u)
-    return rho, u, float(rel_res)
+    vals_u, vecs_u = scipy.linalg.eig(K.T)
+    idx_u = int(np.argmax(vals_u.real))
+    rho = float(vals_u[idx_u].real)
+    u = _positive_l2_vector(vecs_u[:, idx_u])
+
+    vals_v, vecs_v = scipy.linalg.eig(K)
+    idx_v = int(np.argmax(vals_v.real))
+    v = _positive_l2_vector(vecs_v[:, idx_v])
+
+    right_res = np.linalg.norm(K.T @ u - rho * u) / np.linalg.norm(u)
+    left_res = np.linalg.norm(K @ v - rho * v) / np.linalg.norm(v)
+    rho_mismatch = abs(float(vals_v[idx_v].real) - rho) / max(abs(rho), 1e-14)
+    return rho, u, v, float(right_res), float(left_res), float(rho_mismatch)
+
+
+def dominant_exact_u(K: np.ndarray) -> tuple[float, np.ndarray, float]:
+    rho, u, _v, right_res, _left_res, _rho_mismatch = dominant_exact_pair(K)
+    return rho, u, right_res
 
 
 def policy_from_u(chain: ControlledHardCoreChain, u: np.ndarray) -> np.ndarray:
@@ -374,55 +393,132 @@ def policy_from_u(chain: ControlledHardCoreChain, u: np.ndarray) -> np.ndarray:
     return U / U.sum(axis=1, keepdims=True)
 
 
+def normalized_positive_product(v: np.ndarray, u: np.ndarray) -> np.ndarray:
+    mu = np.maximum(v, 1e-14) * np.maximum(u, 1e-14)
+    return mu / mu.sum()
+
+
+def vector_cosine(candidate: np.ndarray, reference: np.ndarray) -> float:
+    cand = candidate.reshape(-1).astype(np.float64)
+    ref = reference.reshape(-1).astype(np.float64)
+    cand /= np.linalg.norm(cand)
+    ref /= np.linalg.norm(ref)
+    if np.dot(cand, ref) < 0:
+        cand *= -1
+    return float(np.dot(cand, ref) / (np.linalg.norm(cand) * np.linalg.norm(ref)))
+
+
+def biorthogonal_observables(chain: ControlledHardCoreChain, mu: np.ndarray) -> dict:
+    nn_values = []
+    current_values = []
+    for z in range(chain.dim):
+        s_idx, a_idx = chain.unpack_z(z)
+        n = chain.states[s_idx]
+        nn_values.append(sum(n[i] * n[i + 1] for i in range(chain.p.L - 1)))
+        current = 0.0
+        for _ns_idx, prob, move_current in chain.transition_outcomes(s_idx, a_idx):
+            current += prob * move_current
+        current_values.append(current)
+    nn_arr = np.asarray(nn_values, dtype=np.float64)
+    current_arr = np.asarray(current_values, dtype=np.float64)
+    return {
+        "nn_occupancy_density": float(np.dot(mu, nn_arr) / max(chain.p.L - 1, 1)),
+        "prior_expected_current_density": float(np.dot(mu, current_arr) / max(chain.p.L - 1, 1)),
+    }
+
+
 def train_model_based(
     chain: ControlledHardCoreChain,
     exact_u: np.ndarray,
+    exact_v: np.ndarray,
     exact_rho: float,
     bond_dim: int,
     steps: int,
     lr: float,
     K_operator: torch.Tensor | None = None,
-) -> tuple[MPSFunction, dict]:
+) -> tuple[MPSFunction, MPSFunction, dict]:
     torch.manual_seed(chain.p.seed + 101)
-    model = MPSFunction(chain.p.L, bond_dim=bond_dim)
-    # Do not initialize from the exact eigenvalue; exact_rho is used only for metrics.
-    log_rho = nn.Parameter(torch.tensor(0.0, dtype=torch.float64))
-    opt = optim.Adam(list(model.parameters()) + [log_rho], lr=lr)
+    u_model = MPSFunction(chain.p.L, bond_dim=bond_dim)
+    v_model = MPSFunction(chain.p.L, bond_dim=bond_dim)
+    # exact_rho is used only for metrics.  We keep separate scalar eigenvalue
+    # estimates for the right and left equations, then report their mismatch.
+    # This avoids one side slowing the other during the non-Hermitian fit.
+    log_rho_u = nn.Parameter(torch.tensor(0.0, dtype=torch.float64))
+    log_rho_v = nn.Parameter(torch.tensor(0.0, dtype=torch.float64))
+    opt = optim.Adam(
+        list(u_model.parameters()) + list(v_model.parameters()) + [log_rho_u, log_rho_v],
+        lr=lr,
+    )
     features = chain.all_feature_tensor()
 
     for _ in range(steps):
         opt.zero_grad()
-        f = model(features).reshape(chain.num_states, chain.num_actions)
-        u = positive_u_from_f(f)
+        f_u = u_model(features).reshape(chain.num_states, chain.num_actions)
+        f_v = v_model(features).reshape(chain.num_states, chain.num_actions)
+        u = positive_u_from_f(f_u)
+        v = positive_u_from_f(f_v)
         if K_operator is None:
             Ku = chain.apply_K_values(u)
+            Kv = None
         else:
             Ku = (K_operator.T @ u.reshape(-1)).reshape(chain.num_states, chain.num_actions)
-        rho = torch.exp(log_rho)
-        residual = torch.log(Ku + 1e-30) - torch.log(rho * u + 1e-30)
-        loss = (residual**2).mean() + 1e-5 * (f**2).mean()
+            Kv = (K_operator @ v.reshape(-1)).reshape(chain.num_states, chain.num_actions)
+        rho_u = torch.exp(log_rho_u)
+        rho_v = torch.exp(log_rho_v)
+        right_residual = torch.log(Ku + 1e-30) - torch.log(rho_u * u + 1e-30)
+        if Kv is None:
+            left_residual = torch.zeros_like(right_residual)
+        else:
+            left_residual = torch.log(Kv + 1e-30) - torch.log(rho_v * v + 1e-30)
+        vu_overlap = (u.reshape(-1) * v.reshape(-1)).mean()
+        overlap_loss = (torch.log(vu_overlap + 1e-30)) ** 2
+        loss = (
+            (right_residual**2).mean()
+            + (left_residual**2).mean()
+            + 1e-6 * overlap_loss
+            + 1e-5 * ((f_u**2).mean() + (f_v**2).mean())
+        )
         loss.backward()
         opt.step()
 
     with torch.no_grad():
-        f = model(features).reshape(chain.num_states, chain.num_actions)
-        u = positive_u_from_f(f)
+        f_u = u_model(features).reshape(chain.num_states, chain.num_actions)
+        f_v = v_model(features).reshape(chain.num_states, chain.num_actions)
+        u = positive_u_from_f(f_u)
+        v = positive_u_from_f(f_v)
         if K_operator is None:
             Ku = chain.apply_K_values(u)
+            Kv = torch.zeros_like(v)
         else:
             Ku = (K_operator.T @ u.reshape(-1)).reshape(chain.num_states, chain.num_actions)
-        rho = torch.exp(log_rho)
-        rel_res = torch.linalg.norm((Ku - rho * u).reshape(-1)) / torch.linalg.norm(u.reshape(-1))
+            Kv = (K_operator @ v.reshape(-1)).reshape(chain.num_states, chain.num_actions)
+        rho_u = torch.exp(log_rho_u)
+        rho_v = torch.exp(log_rho_v)
+        rho = 0.5 * (rho_u + rho_v)
+        right_rel_res = torch.linalg.norm((Ku - rho * u).reshape(-1)) / torch.linalg.norm(u.reshape(-1))
+        left_rel_res = torch.linalg.norm((Kv - rho * v).reshape(-1)) / torch.linalg.norm(v.reshape(-1))
         u_np = u.reshape(-1).numpy()
-        u_np /= np.linalg.norm(u_np)
-        if np.dot(u_np, exact_u) < 0:
-            u_np *= -1
-        cos = float(np.dot(u_np, exact_u) / (np.linalg.norm(u_np) * np.linalg.norm(exact_u)))
-    return model, {
+        v_np = v.reshape(-1).numpy()
+        u_cos = vector_cosine(u_np, exact_u)
+        v_cos = vector_cosine(v_np, exact_v)
+        exact_mu = normalized_positive_product(exact_v, exact_u)
+        model_mu = normalized_positive_product(v_np, u_np)
+        mu_l1 = float(np.abs(model_mu - exact_mu).sum())
+        mu_cos = vector_cosine(model_mu, exact_mu)
+        observables = biorthogonal_observables(chain, model_mu)
+    return u_model, v_model, {
         "rho": float(rho.item()),
+        "rho_right": float(rho_u.item()),
+        "rho_left": float(rho_v.item()),
+        "rho_left_right_rel_mismatch": float(abs(rho_u.item() - rho_v.item()) / max(abs(rho.item()), 1e-14)),
         "rho_rel_error": float(abs(rho.item() - exact_rho) / exact_rho),
-        "relative_residual": float(rel_res.item()),
-        "u_cosine_with_exact": cos,
+        "right_relative_residual": float(right_rel_res.item()),
+        "left_relative_residual": float(left_rel_res.item()),
+        "u_cosine_with_exact": u_cos,
+        "v_cosine_with_exact": v_cos,
+        "doob_stationary_l1_error": mu_l1,
+        "doob_stationary_cosine_with_exact": mu_cos,
+        "doob_stationary_observables": observables,
     }
 
 
@@ -536,13 +632,15 @@ def main() -> None:
         "frobenius_relative_error": float(np.linalg.norm(mpo_diff) / np.linalg.norm(K)),
         "construction": "finite-automaton MPO entry contraction on the legal fixed-N state-action sector",
     }
-    rho, u, exact_res = dominant_exact_u(K)
+    rho, u, v, exact_right_res, exact_left_res, exact_rho_mismatch = dominant_exact_pair(K)
     pi = policy_from_u(chain, u)
+    exact_mu = normalized_positive_product(v, u)
     K_mpo_torch = torch.tensor(K_mpo, dtype=torch.float64)
 
-    _, model_metrics = train_model_based(
+    _, _, model_metrics = train_model_based(
         chain,
         u,
+        v,
         rho,
         bond_dim=args.bond_dim,
         steps=args.model_steps,
@@ -569,7 +667,11 @@ def main() -> None:
         },
         "step1_exact": {
             "rho": rho,
-            "relative_residual": exact_res,
+            "right_relative_residual": exact_right_res,
+            "left_relative_residual": exact_left_res,
+            "left_right_rho_mismatch": exact_rho_mismatch,
+            "biorthogonal_overlap": float(np.dot(v, u)),
+            "doob_stationary_observables": biorthogonal_observables(chain, exact_mu),
             "policy_examples": summarize_policy(chain, pi),
         },
         "step2a_explicit_mpo_validation": mpo_validation,

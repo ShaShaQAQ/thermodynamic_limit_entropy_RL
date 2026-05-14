@@ -36,8 +36,8 @@ nb["cells"] = [
 
 三步是：
 
-1. **小体系精确解**：显式构造 state-action tilted operator，求 Perron 本征值和本征函数。
-2. **显式 MPO + MPS model-based 解**：用有限状态自动机 MPO 表示 $K_\beta$，用 MPS 表示 $u_\theta(n,a)$，并求解 Perron residual。
+1. **小体系精确解**：显式构造 state-action tilted operator，求左右 Perron 本征矢。
+2. **显式 MPO + MPS model-based 解**：用有限状态自动机 MPO 表示 $K_\beta$，用两个 MPS 分别表示 $u_\theta(n,a)$ 与 $v_\phi(n,a)$，并求解左右 Perron residual。
 3. **MPS $u$-$\theta$ learning**：不显式构造矩阵，只从 prior dynamics 采样 transition 来学习。
 
 所有图表都围绕同一个小体系：
@@ -69,12 +69,14 @@ from controlled_chain_experiment import (
     Params,
     ControlledHardCoreChain,
     ExplicitTiltedMPO,
-    dominant_exact_u,
+    dominant_exact_pair,
+    normalized_positive_product,
+    biorthogonal_observables,
     policy_from_u,
 )
 
 ROOT = Path.cwd()
-RESULT_PATH = ROOT / "outputs" / "controlled_chain_results_L6_bd16_td.json"
+RESULT_PATH = ROOT / "outputs" / "controlled_chain_results_L6_bd16_lr.json"
 
 plt.rcParams.update({
     "figure.dpi": 140,
@@ -405,7 +407,7 @@ p(n'\mid n,a)\,
 \exp\!\left[\beta r(n,a,n')\right].
 $$
 
-长时间极限下，核心对象是正 Perron eigenfunction $u_\beta(n,a)$，满足
+长时间极限下，控制 policy 需要正的右 Perron continuation eigenfunction $u_\beta(n,a)$，满足
 
 $$
 \sum_{n',a'}
@@ -448,16 +450,36 @@ $$
 $$
 K^\top u=\rho u.
 $$
+
+但完整的长时间 tilted path measure 还包含左 Perron weight $v_\beta$：
+
+$$
+K v=\rho v.
+$$
+
+$u$ 进入 Doob transform 和 policy，$v$ 进入 conditioned process 的稳态分布。归一化后
+
+$$
+\mu^*(z)
+=
+\frac{v(z)u(z)}{\sum_y v(y)u(y)},
+\qquad z=(n,a).
+$$
+
+所以新版 tensor workflow 同时学习 $u_\theta$ 与 $v_\phi$，这样不只得到 policy，也能直接计算 Doob 稳态观测量。
 """
     ),
     code(
         r"""
 K = chain.build_exact_K()
-rho_exact, u_exact, exact_res = dominant_exact_u(K)
+rho_exact, u_exact, v_exact, exact_right_res, exact_left_res, exact_lr_mismatch = dominant_exact_pair(K)
 pi_exact = policy_from_u(chain, u_exact)
+mu_exact = normalized_positive_product(v_exact, u_exact)
 
 print(f"rho_exact = {rho_exact:.10f}")
-print(f"relative Perron residual = {exact_res:.3e}")
+print(f"right Perron residual = {exact_right_res:.3e}")
+print(f"left Perron residual = {exact_left_res:.3e}")
+print(f"left/right rho mismatch = {exact_lr_mismatch:.3e}")
 print(f"K shape = {K.shape}")
 """
     ),
@@ -984,11 +1006,18 @@ $$
 K^\top u=\rho u.
 $$
 
-### Step 2：显式 MPO + MPS model-based
+### Step 2：显式 MPO + 双 MPS model-based
 
-用 MPS 表示 $u_\theta(n,a)=\exp f_\theta(n,a)$。  
+用两个 MPS 表示左右 Perron 矢：
+
+$$
+u_\theta(n,a)=\exp f_\theta(n,a),
+\qquad
+v_\phi(n,a)=\exp g_\phi(n,a).
+$$
+
 因为模型规则已知，可以把 $K_\beta$ 写成有限状态自动机 MPO。它逐站点扫描 $y_j=(n_j,m_j)$ 和
-$y_j'=(n_j',m_j')$，在虚拟指标中记录 input marker、active-bond gate、output marker 和最近邻 reward 的短程记忆。然后对每个 $(n,a)$ 计算
+$y_j'=(n_j',m_j')$，在虚拟指标中记录 input marker、active-bond gate、output marker 和最近邻 reward 的短程记忆。右矢方程对每个 $(n,a)$ 计算
 
 $$
 (K u_\theta)(n,a)
@@ -996,19 +1025,45 @@ $$
 \sum_{n',a'}K(n',a'\mid n,a)u_\theta(n',a').
 $$
 
-训练目标是 log-Perron residual：
+左矢方程对应
+
+$$
+(K v_\phi)(n',a')
+=
+\sum_{n,a}K(n',a'\mid n,a)v_\phi(n,a).
+$$
+
+训练目标是左右两个 log-Perron residual：
 
 $$
 \mathcal{L}_{\rm model}
 =
-\frac{1}{\lvert\mathcal{S}\rvert\lvert\mathcal{A}\rvert}
-\sum_{n,a}
+\left\langle
 \left[
 \log (K u_\theta)(n,a)
--\log\rho_\theta
+-\log\rho_{u,\theta}
 -\log u_\theta(n,a)
-\right]^2.
+\right]^2
+\right\rangle_{n,a}
++
+\left\langle
+\left[
+\log (K v_\phi)(n,a)
+-\log\rho_{v,\phi}
+-\log v_\phi(n,a)
+\right]^2
+\right\rangle_{n,a}.
 $$
+
+训练后检查 $\rho_{u,\theta}$ 与 $\rho_{v,\phi}$ 是否一致，并用
+
+$$
+\mu_{\theta,\phi}^*(n,a)
+\propto
+v_\phi(n,a)u_\theta(n,a)
+$$
+
+和精确 Doob 稳态分布比较。
 
 ### Step 3：sampled $u$-$\theta$ learning
 
@@ -1130,13 +1185,13 @@ RUN_TRAINING = False
 
 if RUN_TRAINING:
     cmd = [
-        "python3", "controlled_chain_experiment.py",
+        "/opt/miniconda3/envs/myenv1/bin/python", "controlled_chain_experiment.py",
         "--L", "6", "--N", "3",
         "--bond-dim", "16",
-        "--model-steps", "8000",
-        "--sample-steps", "30000",
-        "--batch-size", "512",
-        "--lr", "0.001",
+        "--model-steps", "4000",
+        "--sample-steps", "1000",
+        "--batch-size", "256",
+        "--lr", "0.002",
         "--out", str(RESULT_PATH),
     ]
     subprocess.run(cmd, check=True)
@@ -1153,14 +1208,56 @@ print("relative Frobenius error:", mpo_check.get("frobenius_relative_error"))
     code(
         r"""
 summary = [
-    ("Exact", result["step1_exact"]["rho"], 0.0, result["step1_exact"]["relative_residual"], 1.0),
-    ("MPS model-based", result["step2_mps_model_based"]["rho"], result["step2_mps_model_based"]["rho_rel_error"], result["step2_mps_model_based"]["relative_residual"], result["step2_mps_model_based"]["u_cosine_with_exact"]),
-    ("Sampled u-theta", result["step3_mps_sampled_u_theta"]["rho"], result["step3_mps_sampled_u_theta"]["rho_rel_error"], result["step3_mps_sampled_u_theta"]["relative_residual"], result["step3_mps_sampled_u_theta"]["u_cosine_with_exact"]),
+    {
+        "method": "Exact",
+        "rho": result["step1_exact"]["rho"],
+        "rho_err": 0.0,
+        "right_res": result["step1_exact"]["right_relative_residual"],
+        "left_res": result["step1_exact"]["left_relative_residual"],
+        "u_cos": 1.0,
+        "v_cos": 1.0,
+        "mu_cos": 1.0,
+    },
+    {
+        "method": "MPS model-based",
+        "rho": result["step2_mps_model_based"]["rho"],
+        "rho_err": result["step2_mps_model_based"]["rho_rel_error"],
+        "right_res": result["step2_mps_model_based"]["right_relative_residual"],
+        "left_res": result["step2_mps_model_based"]["left_relative_residual"],
+        "u_cos": result["step2_mps_model_based"]["u_cosine_with_exact"],
+        "v_cos": result["step2_mps_model_based"]["v_cosine_with_exact"],
+        "mu_cos": result["step2_mps_model_based"]["doob_stationary_cosine_with_exact"],
+    },
+    {
+        "method": "Sampled u-theta",
+        "rho": result["step3_mps_sampled_u_theta"]["rho"],
+        "rho_err": result["step3_mps_sampled_u_theta"]["rho_rel_error"],
+        "right_res": result["step3_mps_sampled_u_theta"]["relative_residual"],
+        "left_res": np.nan,
+        "u_cos": result["step3_mps_sampled_u_theta"]["u_cosine_with_exact"],
+        "v_cos": np.nan,
+        "mu_cos": np.nan,
+    },
 ]
 
-print(f"{'method':<18} {'rho':>12} {'rho rel err':>12} {'residual':>12} {'cosine':>12}")
-for name, rho, err, res, cos in summary:
-    print(f"{name:<18} {rho:12.8f} {err:12.3e} {res:12.3e} {cos:12.6f}")
+print(f"{'method':<18} {'rho':>12} {'rho err':>10} {'right res':>10} {'left res':>10} {'u cos':>9} {'v cos':>9} {'mu cos':>9}")
+for row in summary:
+    print(
+        f"{row['method']:<18} {row['rho']:12.8f} {row['rho_err']:10.3e} "
+        f"{row['right_res']:10.3e} {row['left_res']:10.3e} "
+        f"{row['u_cos']:9.6f} {row['v_cos']:9.6f} {row['mu_cos']:9.6f}"
+    )
+
+model_metrics = result["step2_mps_model_based"]
+exact_obs = result["step1_exact"]["doob_stationary_observables"]
+model_obs = model_metrics["doob_stationary_observables"]
+print("\nLeft/right model-based diagnostics")
+print("rho_right:", model_metrics["rho_right"])
+print("rho_left:", model_metrics["rho_left"])
+print("rho left/right relative mismatch:", model_metrics["rho_left_right_rel_mismatch"])
+print("Doob stationary L1 error:", model_metrics["doob_stationary_l1_error"])
+print("Exact stationary observables:", exact_obs)
+print("MPS stationary observables:", model_obs)
 """
     ),
     md(
@@ -1170,18 +1267,21 @@ for name, rho, err, res, cos in summary:
 图 6 分三栏：
 
 1. Perron eigenvalue $\rho$；
-2. 相对本征残差；
-3. 与精确 $u$ 的归一化内积。
+2. 右/左相对本征残差；
+3. 与精确 $u$、$v$、以及 $\mu^*\propto vu$ 的归一化内积。
 
-第三栏越接近 1，说明学到的 eigenfunction 方向越接近精确解。
+第三栏越接近 1，说明学到的 Perron pair 与 Doob 稳态越接近精确解。
 """
     ),
     code(
         r"""
-methods = [s[0] for s in summary]
-rho_vals = [s[1] for s in summary]
-resids = [max(s[3], 1e-16) for s in summary]
-cosines = [s[4] for s in summary]
+methods = [s["method"] for s in summary]
+rho_vals = [s["rho"] for s in summary]
+right_resids = [max(s["right_res"], 1e-16) for s in summary]
+left_resids = [s["left_res"] for s in summary]
+u_cosines = [s["u_cos"] for s in summary]
+v_cosines = [s["v_cos"] for s in summary]
+mu_cosines = [s["mu_cos"] for s in summary]
 
 fig, axes = plt.subplots(1, 3, figsize=(12, 3.4))
 
@@ -1191,17 +1291,28 @@ axes[0].set_ylabel(r"Perron eigenvalue $\rho$")
 axes[0].set_title("Figure 6a. Eigenvalue")
 axes[0].tick_params(axis="x", rotation=25)
 
-axes[1].bar(methods, resids, color=["0.35", "tab:blue", "tab:orange"])
+width = 0.36
+x = np.arange(len(methods))
+axes[1].bar(x - width/2, right_resids, width=width, label="right $u$", color="tab:blue")
+left_plot = [v if np.isfinite(v) else 0.0 for v in left_resids]
+axes[1].bar(x + width/2, left_plot, width=width, label="left $v$", color="tab:green")
 axes[1].set_yscale("log")
-axes[1].set_ylabel(r"$\|Ku-\rho u\|/\|u\|$")
+axes[1].set_xticks(x)
+axes[1].set_xticklabels(methods, rotation=25, ha="right")
+axes[1].set_ylabel("relative Perron residual")
 axes[1].set_title("Figure 6b. Eigen residual")
-axes[1].tick_params(axis="x", rotation=25)
+axes[1].legend(fontsize=8)
 
-axes[2].bar(methods, cosines, color=["0.35", "tab:blue", "tab:orange"])
+width = 0.25
+axes[2].bar(x - width, u_cosines, width=width, label="$u$", color="tab:blue")
+axes[2].bar(x, [v if np.isfinite(v) else 0.0 for v in v_cosines], width=width, label="$v$", color="tab:green")
+axes[2].bar(x + width, [m if np.isfinite(m) else 0.0 for m in mu_cosines], width=width, label=r"$\mu^*$", color="tab:purple")
 axes[2].set_ylim(0.98, 1.0005)
-axes[2].set_ylabel(r"$\langle u_\theta,u_{\rm exact}\rangle/(\|u_\theta\|\|u_{\rm exact}\|)$")
-axes[2].set_title("Figure 6c. Eigenfunction direction")
-axes[2].tick_params(axis="x", rotation=25)
+axes[2].set_xticks(x)
+axes[2].set_xticklabels(methods, rotation=25, ha="right")
+axes[2].set_ylabel("cosine with exact object")
+axes[2].set_title("Figure 6c. Perron pair direction")
+axes[2].legend(fontsize=8)
 
 plt.tight_layout()
 plt.show()
@@ -1212,13 +1323,13 @@ plt.show()
 **图 6 说明。**
 
 **(a) Eigenvalue.**  
-MPS model-based 的 $\rho$ 与精确值几乎重合。sampled $u$-$\theta$ 有可见偏差，因为它只用有限采样估计 Bellman expectation。
+MPS model-based 的 $\rho$ 与精确值几乎重合；新版还同时报告 $\rho_u$ 与 $\rho_v$，二者 mismatch 约为 $10^{-4}$。sampled $u$-$\theta$ 有可见偏差，因为它只用有限采样估计 Bellman expectation。
 
 **(b) Eigen residual.**  
-精确解残差在机器精度；model-based MPS 残差约为 $3.6\times10^{-4}$；sampled 方法残差约为 $8.3\times10^{-2}$。这说明 sampled 方法方向基本对，但方程满足得还不够精确。
+精确解残差在机器精度；model-based MPS 的右、左残差都在 $10^{-4}$ 到 $10^{-3}$ 量级。sampled 方法只学习右矢 $u$，所以没有左残差。
 
 **(c) Eigenfunction direction.**  
-model-based MPS 与精确 $u$ 的 cosine 为 $0.999999$，说明 $\chi=16$ 已经足够表达这个小体系的 $u(n,a)$。sampled 方法 cosine 约为 $0.991$，说明即使用采样，也已经学到了比较接近的控制函数方向。
+model-based MPS 与精确 $u$、$v$ 的 cosine 都接近 $0.999998$，并且 $\mu^*\propto vu$ 的 cosine 也接近 $0.999998$。这说明 $\chi=16$ 不仅能表达控制用的右矢，也能表达 Doob 稳态所需的左矢。
 """
     ),
     md(
@@ -1229,8 +1340,9 @@ model-based MPS 与精确 $u$ 的 cosine 为 $0.999999$，说明 $\chi=16$ 已�
 
 1. 我们定义的多 agent 最近邻 reward MDP 可以严格写成 state-action Perron 问题。
 2. 对小体系，显式对角化给出非平凡最优 policy，说明这个问题确实是控制问题，不是普通随机游走。
-3. $K_\beta$ 可以用有限状态自动机 MPO 在合法 sector 上逐元素复现；$u(n,a)$ 可以用 action-marker MPS 表示。
-4. sampled MPS $u$-$\theta$ learning 也能学到正确方向，但精度低于 model-based，这正是采样学习与显式 Bellman expectation 的差别。
+3. $K_\beta$ 可以用有限状态自动机 MPO 在合法 sector 上逐元素复现；右矢 $u(n,a)$ 与左矢 $v(n,a)$ 都可以用 action-marker MPS 表示。
+4. model-based 双 MPS 同时给出控制 policy 所需的 $u$ 和 Doob 稳态所需的 $\mu^*\propto vu$。
+5. sampled MPS $u$-$\theta$ learning 也能学到正确方向，但目前只学习右矢，精度低于 model-based，这正是采样学习与显式 Bellman expectation 的差别。
 
 下一步如果要推进到热力学极限，应优先做有限尺寸序列：
 
