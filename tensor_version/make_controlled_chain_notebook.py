@@ -32,23 +32,27 @@ nb["cells"] = [
         r"""
 # 受控 hard-core 多 agent 链：解析结构与张量网络数值验证
 
-这份 notebook 只做一件事：把我们讨论的“多 agent 最近邻 reward + 张量网络表示”的问题，从数学定义一路走到数值验证。
+这份 notebook 只做一件事：把我们讨论的“多 agent 最近邻 reward + 张量网络表示”的问题，从数学定义一路走到可运行的 MPO-MPS 大体系原型。
 
-前半部分的三步小体系验证是：
+全文主线是：
 
-1. **小体系精确解**：显式构造 state-action tilted operator，求左右 Perron 本征矢。
-2. **显式 MPO + MPS model-based 解**：用有限状态自动机 MPO 表示 $K_\beta$，用两个 MPS 分别表示 $u_\theta(n,a)$ 与 $v_\phi(n,a)$，并求解左右 Perron residual。
-3. **MPS $u$-$\theta$ learning**：不显式构造矩阵，只从 prior dynamics 采样 transition 来学习。
+1. **物理模型**：受控 hard-core particle chain，状态是半填充粒子链，动作是一个 bond 上的一次尝试移动。
+2. **Perron/Doob 结构**：熵正则 RL 的长时间控制问题等价于 tilted state-action operator 的左右 Perron 问题。
+3. **张量表示**：把 state-action pair 编成局域链 $y_j=(n_j,m_j)$，用 MPS 表示 $u,v$，用自动机 MPO 表示 $K_\beta(y'|y)$。
+4. **两套数值路线**：小体系 dense benchmark 用来验证公式；真正大体系路线用 dense-free MPO-MPS apply + SVD compression。
+5. **结果诊断**：先看 $L=6$ 是否对上 dense exact，再看 $L=6,8,12,16$ 和 $\chi$ 收敛。
 
-随后加入真正 dense-free 的 model-based MPO-MPS power iteration，检查半填充体系
+注意这里有两个不同层次的 “MPS/MPO”：
 
-$$
-L=6,8,12,16,\qquad N=L/2
-$$
+```text
+早期小体系验证:
+    MPSFunction 表示 u,v，但 MPO 仍被 build_restricted_matrix() 变成 dense matrix。
 
-是否可以不构造全局 dense matrix 地跑起来。
+当前大体系原型:
+    FiniteMPS 表示向量，TiltedAutomatonMPO 逐站点作用，apply_mpo_to_mps() 不构造 dense matrix。
+```
 
-前半部分图表围绕同一个小体系：
+前半部分图表围绕小体系：
 
 $$
 L=6,\qquad N=3,\qquad \lvert\mathcal{S}\rvert=\binom{6}{3}=20,\qquad \lvert\mathcal{A}\rvert=10.
@@ -580,14 +584,14 @@ draw_policy_entropy(chain, pi_exact)
     ),
     md(
         r"""
-## 5. Tensor construction：从 MDP 到 MPS/MPO 的完整对应
+## 5. Tensor construction：MPS/MPO 到底表示什么
 
-这一节把所有 tensor 结构集中在一起。目标不是只画示意图，而是明确回答：
+这一节把所有 tensor 结构集中在一起。读完这一节应该能回答四个问题：
 
 1. 一个 state-action pair $(n,a)$ 如何变成一条 MPS 输入链；
-2. 左右 Perron eigenfunctions $u(n,a)$ 与 $v(n,a)$ 如何写成两套 MPS；
-3. tilted operator $K_\beta(n',a'\mid n,a)$ 如何写成 MPO；
-4. 代码里的每一步到底对应哪个张量网络对象。
+2. MPS 中的 bond dimension $\chi$ 到底是什么；
+3. tilted operator $K_\beta(y'|y)$ 为什么能写成一个有限状态自动机 MPO；
+4. 当前真正的大体系算法是怎样用 MPO 更新 MPS 的。
 
 ### 5.1 合法 state-action sector 与局域指标
 
@@ -675,28 +679,20 @@ print("encoded y-chain:", chain.marker_features(state_id, action_id))
     ),
     md(
         r"""
-### 5.2 用 MPS 表示左右 Perron eigenfunction
+### 5.2 用 MPS 表示一个 state-action 向量
 
-普通 MPS 适合表示一个构型函数
-
-$$
-F(n_1,\dots,n_L).
-$$
-
-但这里 Perron eigenfunction 是 state-action 函数。对于非厄米 tilted operator，需要区分右 continuation eigenfunction 和左 Perron weight：
+先暂时忘掉神经网络训练，只看一个有限链向量。任何 state-action 函数都可以写成
 
 $$
-u(n,a),
+F(y_1,\dots,y_L),
 \qquad
-v(n,a),
-\qquad a=(i,\sigma).
+y_j=(n_j,m_j).
 $$
 
-二者使用同一个局域输入链 $y_j=(n_j,m_j)$，但用两套独立 MPS 参数表示。右矢先用 MPS 表示一个无约束实函数
-$f_\theta(n,a)$：
+一个 open-boundary MPS 表示它的形式是
 
 $$
-f_\theta(n,a)
+F(y_1,\dots,y_L)
 =
 \sum_{\alpha_1,\dots,\alpha_{L-1}}
 A^{[1]}_{1,y_1,\alpha_1}
@@ -705,36 +701,41 @@ A^{[2]}_{\alpha_1,y_2,\alpha_2}
 A^{[L]}_{\alpha_{L-1},y_L,1}.
 $$
 
-这里 $\alpha_j=1,\dots,\chi$ 是 MPS bond index，边界虚拟指标固定为 1。然后令
+这里 $\alpha_j$ 是相邻两个 site 之间的虚拟指标，最大维数就是 bond dimension $\chi$。
+物理含义上，$\chi$ 控制左右两半链之间能保留多少相关性；算法上，每次 MPO 作用后 bond dimension 会增长，随后必须截断回
+$\chi_{\max}$。
+
+在这个项目里，MPS 有两种用法：
+
+**小体系 neural ansatz。**  
+`MPSFunction` 先表示 log-amplitude
 
 $$
-u_\theta(n,a)=\exp f_\theta(n,a).
+f_\theta(y),\qquad g_\phi(y),
 $$
 
-左矢完全平行地表示为
+再取
 
 $$
-g_\phi(n,a)
-=
-\sum_{\alpha_1,\dots,\alpha_{L-1}}
-B^{[1]}_{1,y_1,\alpha_1}
-B^{[2]}_{\alpha_1,y_2,\alpha_2}
-\cdots
-B^{[L]}_{\alpha_{L-1},y_L,1},
+u_\theta(y)=\exp f_\theta(y),
+\qquad
+v_\phi(y)=\exp g_\phi(y).
 $$
 
-并令
+这是前半部分和旧 benchmark 使用的变分函数逼近形式。
+
+**大体系 dense-free MPS vector。**  
+`FiniteMPS` 直接表示一个向量
 
 $$
-v_\phi(n,a)=\exp g_\phi(n,a).
+|u\rangle
+\quad\text{or}\quad
+|v\rangle
 $$
 
-这样做有两个好处：
+在 full local space $d=6$ 上的所有 $y$ 构型振幅。它不先枚举合法 sector，也不需要把 $K_\beta$ 变成 dense matrix。
 
-- $u_\theta(n,a)$ 与 $v_\phi(n,a)$ 自动为正，符合 Perron-Frobenius 左右本征函数的结构。
-- MPS 只需要表示 $f_\theta$ 和 $g_\phi$，数值上比直接强制正函数更稳定。
-- $u$ 的整体尺度不影响 Doob policy；$v$ 的整体尺度也只影响 $v u$ 的归一化。因此代码用 `positive_u_from_f` 对每个 MPS 输出减均值作为数值 gauge。
-- 学到 $v$ 后，可以直接构造 Doob 稳态分布 $\mu^*(n,a)\propto v_\phi(n,a)u_\theta(n,a)$，这一步是单独学习 $u$ 时没有的。
+两种用法的共同点是 physical index 都是同一条局域链 $y_1,\dots,y_L$；区别是前者把 MPS 当成可训练函数，后者把 MPS 当成被 MPO 反复作用和压缩的向量。
 """
     ),
     code(
@@ -903,7 +904,7 @@ $y'$ 求和，得到 $(K_\beta^\top u_\theta)(y)$；左矢方程把 $v_\phi(y)$ 
 $(K_\beta v_\phi)(y')$。实际代码中的 `ExplicitTiltedMPO` 把 prior、reward 和受控移动规则合并进一个自动机 MPO；
 `train_model_based` 用同一个 restricted MPO matrix 同时计算这两条 contraction。
 
-### 5.5 MPO-MPS contraction 的数学 workflow
+### 5.5 两种 MPO-MPS workflow：benchmark 版与 dense-free 版
 
 有了 MPS 和 MPO，model-based Perron 方程分成右、左两条。右矢 $u$ 是 future continuation weight：
 
@@ -939,9 +940,23 @@ $$
 4. 用 power iteration、Arnoldi-DMRG、VUMPS-like fixed point 或 residual minimization 同时求左右 fixed points；
 5. 用 $\mu^*(y)\propto v_\phi(y)u_\theta(y)$ 计算 conditioned steady-state observables。
 
-当前小体系代码为了便于严格验证，先把显式 MPO contraction 限制到合法 fixed-$N$ state-action sector 上，生成
+这里有一个容易混淆的地方：本项目现在同时保留了两条 workflow。
+
+**Workflow A：小体系 benchmark。**  
+`controlled_chain_experiment.py` 为了严格对照 exact diagonalization，先把显式 MPO contraction 限制到合法 fixed-$N$ state-action sector 上，生成
 $200\times200$ 的 restricted matrix；随后用 `K_operator.T @ u` 计算右矢方程，用 `K_operator @ v` 计算左矢方程。
 这仍然不是无限链算法，但已经不是 `apply_K_values` 的手写 Bellman 规则，而是显式 MPO entry contraction 后的 restricted-sector 验证。
+
+**Workflow B：当前大体系原型。**  
+`tensor_mpo_mps.py` 不调用 `build_restricted_matrix()`。它直接保留 MPS 形式，在每一步做
+
+```text
+MPS tensor at site j
+    × local automaton transitions W_j(y'_j, y_j)
+    -> enlarged output MPS tensor
+```
+
+然后用 SVD sweep 把 bond dimension 截断回 `chi_max`。这才是 dense-free MPO-MPS 路线。
 """
     ),
     code(
@@ -957,7 +972,71 @@ print("relative Frobenius error:", np.linalg.norm(diff) / np.linalg.norm(K_dense
     ),
     md(
         r"""
-### 5.6 代码 workflow 对照
+### 5.6 当前 dense-free 更新算法逐步写开
+
+当前真正用于 $L=6,8,12,16$ 和 $\chi$ 扫描的是 `tensor_mpo_mps.py`。它的对象关系如下：
+
+```text
+ControlledHardCoreChainLite
+    只保存模型规则：states, actions, transition_outcomes, reward。
+
+FiniteMPS
+    保存一串 A[j]，A[j].shape = (chi_left, d_local, chi_right)。
+
+TiltedAutomatonMPO
+    不保存一个巨大的矩阵，只保存如何从左到右扫描 y,y' 的局域规则。
+
+apply_mpo_to_mps
+    把 automaton MPO 逐站点作用到 MPS 上，生成新的 MPS，然后 SVD compression。
+
+power_method_right_left
+    反复做 K_beta^T u 和 K_beta v 的压缩 power iteration。
+```
+
+更新方程是：
+
+$$
+\tilde u_{k+1}=K_\beta^\top u_k,
+\qquad
+u_{k+1}=\frac{{\rm compress}_{\chi_{\max}}(\tilde u_{k+1})}
+{\|{\rm compress}_{\chi_{\max}}(\tilde u_{k+1})\|},
+$$
+
+$$
+\tilde v_{k+1}=K_\beta v_k,
+\qquad
+v_{k+1}=\frac{{\rm compress}_{\chi_{\max}}(\tilde v_{k+1})}
+{\|{\rm compress}_{\chi_{\max}}(\tilde v_{k+1})\|}.
+$$
+
+对应的 eigenvalue 估计取为每次归一化前的 norm：
+
+$$
+\rho_R^{(k)}=\|\tilde u_{k+1}\|,
+\qquad
+\rho_L^{(k)}=\|\tilde v_{k+1}\|.
+$$
+
+如果算法收敛且压缩误差小，应看到：
+
+$$
+\rho_R^{(k)}\simeq \rho_L^{(k)}.
+$$
+
+所以 notebook 后面的两个主要诊断是：
+
+```text
+left/right mismatch = |rho_R-rho_L| / ((rho_R+rho_L)/2)
+discarded weight    = SVD 截断掉的奇异值平方和
+```
+
+`mismatch` 大说明左右 fixed point 没有一致；`discarded weight` 大说明当前 `chi_max` 无法承载 MPO 作用后产生的相关性。
+这也是为什么后面要做 $\chi$ 收敛测试。
+"""
+    ),
+    md(
+        r"""
+### 5.7 代码 workflow 对照
 
 下面把数学对象、tensor-network 对象和代码对象逐项对应。这里不用 Markdown 表格，是为了避免表格解析器把条件概率中的竖线误认为列分隔符。
 
@@ -988,8 +1067,8 @@ $$
 
 它在代码中由 `marker_features` 生成。
 
-**Right-MPS eigenfunction ansatz.**  
-第一套 MPS 表示右 Perron 矢的 log-amplitude
+**Right-MPS eigenfunction.**  
+小体系 neural benchmark 中，第一套 MPS 表示右 Perron 矢的 log-amplitude
 
 $$
 f_\theta(n,a),
@@ -1003,8 +1082,8 @@ $$
 
 对应 `positive_u_from_f`。
 
-**Left-MPS eigenfunction ansatz.**  
-第二套 MPS 表示左 Perron 矢的 log-amplitude
+**Left-MPS eigenfunction.**  
+小体系 neural benchmark 中，第二套 MPS 表示左 Perron 矢的 log-amplitude
 
 $$
 g_\phi(n,a),
@@ -1045,16 +1124,17 @@ $$
 
 这同样在 `ExplicitTiltedMPO.entry` 中完成。
 
-**Tilted MPO.**  
+**Tilted MPO / automaton operator.**  
 完整一步 operator 是
 
 $$
 K_\beta(y'\mid y).
 $$
 
-它由 `ExplicitTiltedMPO.build_restricted_matrix` 在合法 fixed-$N$ sector 上逐元素 contraction 得到。
+小体系验证中，它由 `ExplicitTiltedMPO.build_restricted_matrix` 在合法 fixed-$N$ sector 上逐元素 contraction 得到。  
+大体系原型中，它由 `TiltedAutomatonMPO` 作为自动机规则保存，并由 `apply_mpo_to_mps` 直接作用到 `FiniteMPS` 上。
 
-**Model-based right solve.**  
+**Model-based right solve, benchmark version.**  
 右矢训练目标对应
 
 $$
@@ -1063,7 +1143,7 @@ $$
 
 代码中是 `Ku = K_operator.T @ u.reshape(-1)`，然后最小化右 log-residual。
 
-**Model-based left solve.**  
+**Model-based left solve, benchmark version.**  
 左矢训练目标对应
 
 $$
@@ -1078,6 +1158,20 @@ $$
 $$
 
 是否足够小。
+
+**Dense-free right/left power solve, large-system version.**  
+大体系原型中，对应代码是 `power_method_right_left`：
+
+```python
+next_u = apply_mpo_to_mps(operator, u, transpose=True)
+next_v = apply_mpo_to_mps(operator, v, transpose=False)
+rho_right = next_u.norm()
+rho_left = next_v.norm()
+next_u.normalize()
+next_v.normalize()
+```
+
+这里的 `transpose=True` 就是 $K_\beta^\top u$，`transpose=False` 就是 $K_\beta v$。
 
 **Doob stationary measure.**  
 左右矢都得到后，conditioned process 的 state-action 稳态分布是
@@ -1532,11 +1626,19 @@ $$
 
 这就是为什么 bulk 内会到达 Doob 稳态，而 finite-time path 的两端仍然带有边界效应。
 
-### 10.1 这一步是否也可以张量网络化？
+### 10.1 有限时间版本和 MPO-MPS 的关系
 
-可以。有限时间计算不是必须用 dense matrix。张量网络形式是一个二维 strip：横向是空间 MPS/MPO 指标，纵向是时间层。每一层是同一个 tilted MPO $K_\beta$。
+有限时间计算在小体系里仍然用 dense matrix 做精确 benchmark，但它和大体系 MPO-MPS power iteration 使用的是同一个核心 primitive：
 
-有限时间的 tensor workflow 是：
+$$
+{\rm apply}\ K_\beta\ {\rm or}\ K_\beta^\top\ {\rm to\ an\ MPS},
+\qquad
+{\rm then\ compress}.
+$$
+
+如果不用 dense matrix，有限时间 tilted ensemble 就是一条二维 tensor strip：横向是空间 MPS/MPO 指标，纵向是时间层。每一层是同一个 tilted MPO $K_\beta$。
+
+对应的 dense-free workflow 是：
 
 1. 把初始边界 $p_0(y)$ 表示成 MPS；
 2. 反复作用 tilted MPO：
@@ -1553,7 +1655,8 @@ $$
 \mu_{T,t}(y)\propto f_t(y)b_{T-t}(y).
 $$
 
-所以有限时间版本也有自然的 TN 表示。当前小体系代码用 dense matrix 只是为了精确 benchmark；真正大体系应改成 MPO-MPS time evolution + compression，类似 transfer-matrix TEBD / finite-time Feynman-Kac contraction。
+所以有限时间版本不是另一套理论；它只是把第 5.6 节的 `apply_mpo_to_mps` 从 fixed-point power iteration 改成有限步 forward/backward propagation。
+当前 notebook 保留 dense finite-time 结果，是为了验证 Perron bulk limit；大体系有限时间版本的实现可以直接复用 `tensor_mpo_mps.py` 里的 MPO-MPS apply 和 compression。
 """
     ),
     code(
@@ -1643,12 +1746,84 @@ $$
     ),
     md(
         r"""
+### 10.2 整条时间剖面：finite-time marginal / Perron stationary ratio
+
+上面的图只检查了 $t=T/2$ 中点。为了更接近原始 RL 文章里的有限步长图，现在对固定 horizon 的每一个时间层都计算
+
+$$
+R_{T,t}(z)
+=
+\frac{\mu_{T,t}(z)}{\mu^*(z)}.
+$$
+
+严格说，分布和分布的“比值”不是一个标量，所以图里选择 $\mu^*(z)$ 权重最大的几个 state-action 分量画 $R_{T,t}(z)$。如果 bulk 已经进入 Perron/Doob 稳态，这些曲线会在远离左右边界的中间时间区域贴近 1。右图同时给出全分布距离，用来避免只看少数分量产生误判。
+"""
+    ),
+    code(
+        r"""
+profile_row = max(finite_rows, key=lambda row: row["horizon"])
+profile = profile_row["time_profile"]
+times = np.array(profile["times"], dtype=float)
+T_profile = profile_row["horizon"]
+
+fig, axes = plt.subplots(1, 2, figsize=(11.5, 3.7))
+
+for trace in profile["selected_ratio_traces"]:
+    state = "".join(str(x) for x in trace["state"])
+    label = (
+        rf"$z={trace['z_index']}$, "
+        rf"$n={state}$, "
+        rf"$a=({trace['action_bond']},{trace['action_direction']})$"
+    )
+    axes[0].plot(times, trace["ratios"], marker="o", ms=3, lw=1.2, label=label)
+
+axes[0].axhline(1.0, color="k", ls="--", lw=1)
+axes[0].axvspan(0.25 * T_profile, 0.75 * T_profile, color="0.9", alpha=0.6, zorder=-1)
+axes[0].set_xlabel("time slice t")
+axes[0].set_ylabel(r"$\mu_{T,t}(z)/\mu^*(z)$")
+axes[0].set_title(rf"Figure 7e. Ratio profile at $T={T_profile}$")
+axes[0].legend(fontsize=6.5, loc="best")
+
+axes[1].plot(times, profile["l1_to_doob_stationary"], marker="o", label=r"$L^1(\mu_{T,t},\mu^*)$")
+axes[1].plot(
+    times,
+    profile["doob_weighted_mean_abs_log_ratio"],
+    marker="s",
+    label=r"$\sum_z\mu^*(z)|\log R_{T,t}(z)|$",
+)
+axes[1].axvspan(0.25 * T_profile, 0.75 * T_profile, color="0.9", alpha=0.6, zorder=-1)
+axes[1].set_yscale("log")
+axes[1].set_xlabel("time slice t")
+axes[1].set_ylabel("distribution-level deviation")
+axes[1].set_title("Figure 7f. Full-distribution bulk diagnostic")
+axes[1].legend(fontsize=8)
+
+plt.tight_layout()
+plt.show()
+"""
+    ),
+    md(
+        r"""
+**图 7e/7f 说明。**
+
+灰色区域标出中间半段时间切片。可以看到，有限 horizon 的 tilted ensemble 在左右端点明显受初始边界 $p_0$ 和终端边界 $\mathbf{1}$ 影响；但进入 bulk 后，典型高权重 state-action 分量的比值
+
+$$
+\mu_{T,t}(z)/\mu^*(z)
+$$
+
+会贴近 1。右图的全分布误差也在中间区域降低，说明这不是单个分量的偶然匹配，而是整条有限时间 path ensemble 的 bulk marginal 正在接近 Perron 稳定态
+
+$$
+\mu^*(z)\propto v(z)u(z).
+$$
+"""
+    ),
+    md(
+        r"""
 ## 11. Dense-free MPO-MPS 大体系原型
 
-前面的 `ExplicitTiltedMPO.build_restricted_matrix()` 仍然会把 automaton MPO 限制到合法 sector 后生成 dense matrix。
-这一步只是小体系 benchmark，不是热力学极限算法。
-
-现在新增的 `tensor_mpo_mps.py` 做的是另一条路线：
+这一节使用第 5.6 节解释的 dense-free 路线。计算对象不是小体系 dense matrix，而是：
 
 ```text
 legal half-filled MPS
@@ -1658,7 +1833,13 @@ legal half-filled MPS
 ```
 
 这里不再构造全局 $K_\beta$ matrix。计算在 W003 的 `cmt` 队列上完成，本 notebook 只读取结果文件。
-当前第一版使用 full local `d=6` MPS，而不是 U(1) block-sparse MPS，所以结果必须和压缩诊断一起看。
+
+当前第一版有两个重要限制：
+
+1. 使用 full local `d=6` MPS，而不是 U(1) block-sparse / fixed-$N$ MPS；
+2. 每步只做 SVD compression，不做更强的 variational two-site fitting。
+
+因此这一节的图表不是“最终热力学极限外推”，而是检查 dense-free 路线能跑到什么规模、误差主要在哪里。
 """
     ),
     code(
@@ -1926,30 +2107,47 @@ L=12: chi<=192 is not enough; need better compression/variational fitting or sym
         r"""
 ## 12. 最终结论
 
-这个 notebook 验证了三点：
+这份 notebook 的逻辑可以压缩成一条链：
 
-1. 我们定义的多 agent 最近邻 reward MDP 可以严格写成 state-action Perron 问题。
-2. 对小体系，显式对角化给出非平凡最优 policy，说明这个问题确实是控制问题，不是普通随机游走。
-3. $K_\beta$ 可以用有限状态自动机 MPO 在合法 sector 上逐元素复现；右矢 $u(n,a)$ 与左矢 $v(n,a)$ 都可以用 action-marker MPS 表示。
-4. model-based 双 MPS 同时给出控制 policy 所需的 $u$ 和 Doob 稳态所需的 $\mu^*\propto vu$。
-5. finite-time exact forward/backward 计算显示，有限 horizon 的 bulk midpoint marginal 会收敛到 $\mu^*\propto vu$，而左右边界保留有限时间效应。
-6. sampled MPS $u$-$\theta$ learning 也能学到正确方向，但目前只学习右矢，精度低于 model-based，这正是采样学习与显式 Bellman expectation 的差别。
-7. 新增 dense-free MPO-MPS power iteration 已经能在 W003 上跑半填充 $L=6,8,12,16$，说明后续可以沿 tensor-network 路线继续优化，而不是继续扩大 dense exact matrix。
+```text
+entropy-regularized controlled chain
+    -> tilted state-action operator K_beta
+    -> left/right Perron equations
+    -> y_j=(n_j,m_j) local encoding
+    -> MPS for u,v and automaton MPO for K_beta
+    -> dense benchmark for L=6
+    -> dense-free MPO-MPS power iteration for larger L
+```
+
+具体结论是：
+
+1. 受控 hard-core chain 的 RL/large-deviation 问题可以严格写成 state-action Perron 问题。
+2. 小体系 exact diagonalization 给出非平凡最优 policy，说明 reward 和控制确实产生了有结构的 conditioned dynamics。
+3. $K_\beta(y'|y)$ 可以由有限状态自动机 MPO 表示；自动机 virtual index 记录 marker、pending active gate、输出 marker 计数和最近邻 reward 记忆。
+4. 小体系 benchmark 中，`MPSFunction` 表示 $u_\theta,v_\phi$，但 `ExplicitTiltedMPO.build_restricted_matrix()` 仍会生成 dense matrix；它的作用是验证公式和方向约定。
+5. 大体系原型中，`FiniteMPS + TiltedAutomatonMPO + apply_mpo_to_mps` 真正避免了全局 dense matrix，更新规则是
+
+$$
+u_{k+1}\leftarrow {\rm normalize}\,{\rm compress}(K_\beta^\top u_k),
+\qquad
+v_{k+1}\leftarrow {\rm normalize}\,{\rm compress}(K_\beta v_k).
+$$
+
+6. finite-time exact forward/backward 计算显示，有限 horizon 的 bulk midpoint marginal 会收敛到 $\mu^*\propto vu$；这个有限时间算法也可以复用同一个 MPO-MPS apply primitive。
+7. dense-free power iteration 已经能在 W003 上跑半填充 $L=6,8,12,16$，说明后续应沿 tensor-network 路线继续优化，而不是继续扩大 dense exact matrix。
 8. $\chi$ 收敛测试表明：$L=6$ 已经收敛并对上 dense exact；$L=8$ 需要至少 $\chi\sim 192$ 才进入较可信区间；$L=12$ 在当前算法和 $\chi\le 192$ 下仍未收敛。
 
-下一步如果要推进到热力学极限，应优先做有限尺寸序列：
+下一步如果要推进到可靠热力学极限，不应先追求更大的 $L$，而应先改进算法质量：
 
-$$
-L=6,8,10,\dots,\qquad N/L=\bar\rho.
-$$
-
-并画
+1. 做 canonical gauge 更稳定的 two-site / variational compression；
+2. 做 fixed-$N$ 或 U(1) block-sparse MPS，避免 full local space 浪费 bond dimension；
+3. 在每个 $L$ 上先完成 $\chi$ 收敛，再画
 
 $$
 \frac{1}{L}\log\rho_{\beta,L}
 $$
 
-随 $L$ 的收敛。
+随 $L$ 的外推。
 """
     ),
 ]
